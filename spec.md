@@ -1,174 +1,149 @@
-# OAuth2 マルチテナント・イベント単位 Token Exchange 仕様 改訂版
+# IdP / Authorization Server Token Exchange 仕様
 
 ## 1. 目的
 
-本仕様は、マルチテナント環境において、OAuth2 Token Exchange を用いてアクセストークンの権限範囲を段階的に狭める方式を定義する。
+本仕様は、IdP / Authorization Server におけるユーザー認証後の `tenant_access` token 発行、および `tenant_access` token から `event_access` token への OAuth2 Token Exchange を定義する。
 
-```text
-ログイン後 token
-  → tenant_access token
-  → event_access token
-```
-
-`tenant_id` / `event_id` は `scope` には含めず、Token Exchange Request の `resource` パラメータから解釈し、発行後 JWT の claim として表現する。
+本仕様は IdP / Authorization Server の仕様であり、BFF、Browser、フロントエンド、ログイン画面、テナント選択UI、Resource Server の詳細実装は対象外とする。
 
 ---
 
-## 2. 基本方針
+## 2. 適用範囲
 
-### 2.1 scope
-
-`scope` は「何ができるか」を表す。
-
-暫定 scope:
+### 2.1 扱うもの
 
 ```text
-tenant.read
-tenant.write
-events.read
-events.write
+- ユーザー認証後の tenant_access token 発行
+- tenant_access token の claim
+- tenant_access → event_access の Token Exchange
+- event_access token の claim
+- client 認可
+- audience 検証
+- resource 検証
+- scope 検証
+- JWT 発行
+- JWT 失効方針
+- 監査ログ
+- エラー方針
 ```
 
-詳細な scope 設計は後で再検討する。
+### 2.2 扱わないもの
 
-### 2.2 resource
+```text
+- BFF 仕様
+- Browser 仕様
+- フロントエンド仕様
+- ログイン画面
+- email 入力後のテナント選択 UI
+- tenant_access token の具体的な取得画面フロー
+- Resource Server の詳細実装
+```
 
-`resource` は「どの tenant / event に対する token を要求するか」を表す。
+---
 
-`x_tenant_id` / `x_event_id` は使用しない。
+## 3. 前提
 
-### 2.3 claim
+Authorization Server は REST API　を用いてユーザー認証を行う
 
-発行後 JWT には、対象 tenant / event を claim として含める。
+認証成功後、Authorization Server は特定 tenant 文脈を持つ `tenant_access` token を JWT access token として発行する。
+
+本仕様では `login` token は定義しない。
+
+本仕様における Token Exchange は、`tenant_access` token を subject token として、`event_access` token を発行する処理のみを対象とする。
+
+---
+
+## 4. token 種別
+
+### 4.1 tenant_access token
+
+`tenant_access` token は、認証済みユーザーに対して発行される、特定 tenant 文脈を持つ JWT access token である。
+
+用途:
+
+```text
+- tenant 文脈での API アクセス
+- event_access token への Token Exchange の subject_token
+```
+
+例:
 
 ```json
 {
+  "iss": "https://auth.example.com",
+  "sub": "user-123",
+  "aud": "backend-api",
+  "client_id": "client-123",
+  "scope": "tenant.read tenant.write events.read events.write",
+  "token_use": "tenant_access",
+  "resource": "https://api.example.com/tenants/tenant-a",
   "tenant_id": "tenant-a",
-  "event_id": "event-1"
+  "iat": 1710000000,
+  "nbf": 1710000000,
+  "exp": 1710000900,
+  "jti": "jti-tenant-001"
 }
 ```
 
-### 2.4 Resource Server
+### 4.2 event_access token
 
-Resource Server は API 実行時の最終認可を行う。
+`event_access` token は、`tenant_access` token から Token Exchange により発行される、特定 event 文脈を持つ JWT access token である。
 
-確認対象:
+用途:
 
 ```text
-- JWT 署名
-- iss
-- aud
-- exp / nbf
-- token_use
-- scope
-- resource
-- tenant_id
-- event_id
-- path との整合性
-- DB 上の現在の permission
-- リソース状態
+- 特定 event 文脈での API アクセス
+```
+
+例:
+
+```json
+{
+  "iss": "https://auth.example.com",
+  "sub": "user-123",
+  "aud": "backend-api",
+  "client_id": "client-123",
+  "scope": "events.read events.write",
+  "token_use": "event_access",
+  "resource": "https://api.example.com/tenants/tenant-a/events/event-1",
+  "tenant_id": "tenant-a",
+  "event_id": "event-1",
+  "iat": 1710000000,
+  "nbf": 1710000000,
+  "exp": 1710000600,
+  "jti": "jti-event-001"
+}
 ```
 
 ---
 
-## 3. 構成要素
+## 5. Token Exchange 遷移ルール
 
-```text
-Browser
-  ↓ Cookie
-BFF
-  ↓ Token Exchange
-Authorization Server
-  ↓ JWT Access Token
-Resource Server
-```
-
-### 3.1 Browser
-
-Browser は access token を直接保持しない。
-
-保持するもの:
-
-```text
-- セッション Cookie
-```
-
-保持しないもの:
-
-```text
-- access token
-- refresh token
-- tenant_access token
-- event_access token
-- client secret
-```
-
-### 3.2 BFF
-
-BFF は以下を担当する。
-
-```text
-- セッション確認
-- Token Exchange の実行
-- 交換後 token の保存
-- Resource Server への API 呼び出し
-```
-
-### 3.3 Authorization Server
-
-Authorization Server は以下を担当する。
-
-```text
-- Token Exchange エンドポイントの提供
-- subject_token の検証
-- client 認証
-- client ごとの audience / scope 許可判定
-- resource の検証
-- tenant_id / event_id の解釈
-- role に基づく scope 発行可否判定
-- token_use 遷移の強制
-- JWT access token の発行
-- 監査ログの記録
-```
-
-Authorization Server は認可判断の一次判定を行うが、Resource Server の最終認可を代替しない。
-
-### 3.4 Resource Server
-
-Resource Server は以下を担当する。
-
-```text
-- JWT の自己検証
-- scope の確認
-- resource / tenant_id / event_id と request path の照合
-- DB を用いた現在 permission の確認
-- 業務状態に基づく操作可否判定
-```
-
----
-
-## 4. Token Exchange 遷移ルール
-
-Authorization Server は、交換元 token の `token_use` に基づき、以下の Token Exchange のみを許可する。
+Authorization Server は以下の Token Exchange のみを許可する。
 
 | 交換元 token_use | 発行先 token_use | 許可 |
 |---|---|---|
-| `login` | `tenant_access` | 許可 |
 | `tenant_access` | `event_access` | 許可 |
-| `login` | `event_access` | 禁止 |
-| `tenant_access` | `tenant_access` | 禁止 |
-| `event_access` | `tenant_access` | 禁止 |
-| `event_access` | `event_access` | 禁止 |
+
+以下は禁止する。
+
+| 交換元 token_use | 発行先 token_use |
+|---|---|
+| `tenant_access` | `tenant_access` |
+| `event_access` | `tenant_access` |
+| `event_access` | `event_access` |
+
+`login` token は本仕様では定義しない。
 
 許可されない遷移が要求された場合、Authorization Server は `invalid_grant` を返す。
 
 ---
 
-## 5. audience 仕様
+## 6. audience 仕様
 
 `audience` は Resource Server の論理識別子である。
 
-現時点では具体的な audience 名は未確定とする。
+具体的な audience 名は本仕様では固定しない。
 
 確定ルール:
 
@@ -184,7 +159,7 @@ Authorization Server は、交換元 token の `token_use` に基づき、以下
 
 ---
 
-## 6. client ごとの Token Exchange 許可設定
+## 7. client 認可仕様
 
 Authorization Server は `client_id` ごとに以下の設定を持つ。
 
@@ -198,22 +173,34 @@ allowed_scopes
 max_token_ttl_by_token_use
 ```
 
-### 6.1 必須ルール
+### 7.1 Token Exchange 許可条件
+
+Authorization Server は Token Exchange Request に対して以下を検証する。
 
 ```text
-- Token Exchange を許可された client のみが Token Exchange を実行できる
-- public client からの Token Exchange は禁止する
-- confidential client のみ Token Exchange を実行できる
-- requested audience は client.allowed_audiences に含まれていなければならない
-- requested scope は client.allowed_scopes に含まれていなければならない
-- requested token_use 遷移は client.allowed_token_exchange_transitions に含まれていなければならない
+- client が認証済みである
+- client が confidential client である
+- client に token-exchange grant が許可されている
+- requested audience が client.allowed_audiences に含まれる
+- requested scope が client.allowed_scopes に含まれる
+- requested token_use 遷移が client.allowed_token_exchange_transitions に含まれる
+```
+
+### 7.2 禁止事項
+
+```text
+- public client からの Token Exchange
+- 未登録 client からの Token Exchange
+- allowed_audiences 外の audience 要求
+- allowed_scopes 外の scope 要求
+- 許可されていない token_use 遷移
 ```
 
 ---
 
-## 7. 暫定 role / scope 仕様
+## 8. 暫定 role / scope 仕様
 
-### 7.1 role
+### 8.1 role
 
 暫定 role:
 
@@ -223,7 +210,7 @@ admin
 staff
 ```
 
-### 7.2 scope
+### 8.2 scope
 
 暫定 scope:
 
@@ -234,7 +221,9 @@ events.read
 events.write
 ```
 
-### 7.3 role → scope 対応表
+詳細な scope 設計は後で再検討する。
+
+### 8.3 role → scope 対応表
 
 | role | 許可 scope |
 |---|---|
@@ -242,28 +231,32 @@ events.write
 | `admin` | `tenant.read`, `tenant.write`, `events.read`, `events.write` |
 | `staff` | `tenant.read`, `events.read` |
 
-### 7.4 注意
+### 8.4 role の扱い
 
-この role / scope 対応表は暫定である。
+role は Authorization Server が scope 発行可否を判定するための内部情報である。
 
-詳細な scope 設計は後で再検討する。
+role は JWT claim には含めない。
 
 ---
 
-## 8. scope 発行ルール
+## 9. scope 発行ルール
 
 Authorization Server は、要求された `scope` を暗黙に縮小して発行してはならない。
 
-要求 scope に許可外 scope が含まれる場合、`invalid_scope` を返す。
+要求 scope に許可外 scope が含まれる場合、Authorization Server は `invalid_scope` を返す。
 
-### 8.1 tenant_access token 発行時
+### 9.1 tenant_access token 発行時
+
+`tenant_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
 
 ```text
 requested_scope ⊆ client.allowed_scopes
 requested_scope ⊆ role.allowed_scopes
 ```
 
-### 8.2 event_access token 発行時
+### 9.2 event_access token 発行時
+
+`event_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
 
 ```text
 requested_scope ⊆ client.allowed_scopes
@@ -273,31 +266,31 @@ requested_scope ⊆ role.allowed_scopes
 
 ---
 
-## 9. resource 仕様
+## 10. resource 仕様
 
-### 9.1 採用方針
+### 10.1 採用方針
 
-Token Exchange Request では、対象 tenant / event の指定に `resource` パラメータを使用する。
+Token Exchange Request では、対象 event の指定に `resource` パラメータを使用する。
 
 `x_tenant_id` / `x_event_id` は使用しない。
 
-### 9.2 tenant resource
+### 10.2 tenant resource
 
-tenant token を要求する場合:
-
-```text
-resource=https://api.example.com/tenants/{tenantId}
-```
-
-### 9.3 event resource
-
-event token を要求する場合:
+`tenant_access` token の resource は以下の形式とする。
 
 ```text
-resource=https://api.example.com/tenants/{tenantId}/events/{eventId}
+https://api.example.com/tenants/{tenantId}
 ```
 
-### 9.4 resource 検証
+### 10.3 event resource
+
+`event_access` token を要求する場合、Token Exchange Request の `resource` は以下の形式とする。
+
+```text
+https://api.example.com/tenants/{tenantId}/events/{eventId}
+```
+
+### 10.4 resource 検証
 
 Authorization Server は `resource` について以下を検証する。
 
@@ -308,11 +301,11 @@ Authorization Server は `resource` について以下を検証する。
 - path が許可パターンに一致する
 - tenantId / eventId が ID 形式に一致する
 - tenant が存在し有効である
-- event token の場合、event が tenant に属している
-- subject user が対象 tenant / event にアクセス可能である
+- event が tenant に属している
+- subject user が対象 event にアクセス可能である
 ```
 
-### 9.5 ID 形式
+### 10.5 ID 形式
 
 tenantId / eventId は以下の形式に限定する。
 
@@ -326,86 +319,6 @@ tenantId / eventId は以下の形式に限定する。
 - trim しない
 - 大文字小文字変換しない
 - Unicode 正規化しない
-```
-
----
-
-## 10. token 種別
-
-## 10.1 login token
-
-ログイン直後に得られる token。
-
-用途:
-
-```text
-- 自分自身の情報取得
-- 所属 tenant 一覧取得
-- tenant_access token への Token Exchange
-```
-
-例:
-
-```json
-{
-  "iss": "https://auth.example.com",
-  "sub": "user-123",
-  "aud": "bff",
-  "client_id": "bff-client",
-  "scope": "openid profile tenant.read",
-  "token_use": "login",
-  "iat": 1710000000,
-  "nbf": 1710000000,
-  "exp": 1710000300,
-  "jti": "jti-login-001"
-}
-```
-
-## 10.2 tenant_access token
-
-特定 tenant の API 利用に使う token。
-
-例:
-
-```json
-{
-  "iss": "https://auth.example.com",
-  "sub": "user-123",
-  "aud": "backend-api",
-  "client_id": "bff-client",
-  "scope": "tenant.read tenant.write events.read events.write",
-  "token_use": "tenant_access",
-  "resource": "https://api.example.com/tenants/tenant-a",
-  "tenant_id": "tenant-a",
-  "iat": 1710000000,
-  "nbf": 1710000000,
-  "exp": 1710000900,
-  "jti": "jti-tenant-001"
-}
-```
-
-## 10.3 event_access token
-
-特定 event の API 利用に使う token。
-
-例:
-
-```json
-{
-  "iss": "https://auth.example.com",
-  "sub": "user-123",
-  "aud": "backend-api",
-  "client_id": "bff-client",
-  "scope": "events.read events.write",
-  "token_use": "event_access",
-  "resource": "https://api.example.com/tenants/tenant-a/events/event-1",
-  "tenant_id": "tenant-a",
-  "event_id": "event-1",
-  "iat": 1710000000,
-  "nbf": 1710000000,
-  "exp": 1710000600,
-  "jti": "jti-event-001"
-}
 ```
 
 ---
@@ -451,9 +364,9 @@ tenant_id
 event_id
 ```
 
-### 11.5 role claim
+### 11.5 JWT に含めない claim
 
-以下の claim は JWT に入れない。
+以下の claim は JWT に含めない。
 
 ```text
 role
@@ -461,46 +374,16 @@ tenant_role
 event_role
 ```
 
-role は Authorization Server が scope 発行可否を判定するための内部情報であり、Resource Server は role claim に依存してはならない。
-
 ---
 
 ## 12. Token Exchange Request
 
-### 12.1 tenant_access token 発行
+### 12.1 event_access token 発行
 
 ```http
 POST /oauth2/token
 Content-Type: application/x-www-form-urlencoded
-Authorization: Basic base64(bff-client:secret)
-
-grant_type=urn:ietf:params:oauth:grant-type:token-exchange
-&subject_token={login_token}
-&subject_token_type=urn:ietf:params:oauth:token-type:access_token
-&audience=backend-api
-&resource=https://api.example.com/tenants/tenant-a
-&scope=tenant.read events.read
-```
-
-Authorization Server は以下を確認する。
-
-```text
-- subject_token が有効
-- subject_token.token_use == login
-- resource が tenant resource 形式である
-- user が対象 tenant に現在所属している
-- tenant が有効である
-- client が Token Exchange を許可されている
-- client が audience を要求できる
-- requested_scope が client / role に許可されている
-```
-
-### 12.2 event_access token 発行
-
-```http
-POST /oauth2/token
-Content-Type: application/x-www-form-urlencoded
-Authorization: Basic base64(bff-client:secret)
+Authorization: Basic base64(client_id:client_secret)
 
 grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 &subject_token={tenant_access_token}
@@ -513,12 +396,16 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 Authorization Server は以下を確認する。
 
 ```text
-- subject_token が有効
+- client が認証済みである
+- client が Token Exchange を許可されている
+- subject_token が有効である
+- subject_token_type が access_token である
 - subject_token.token_use == tenant_access
+- requested audience が client に許可されている
+- requested resource が event resource 形式である
 - subject_token.tenant_id == resource の tenantId
-- resource が event resource 形式である
 - event が対象 tenant に属している
-- user が event に現在アクセス可能である
+- subject user が event に現在アクセス可能である
 - requested_scope が subject_token.scope を超えていない
 - requested_scope が client / role に許可されている
 ```
@@ -529,7 +416,7 @@ Authorization Server は以下を確認する。
 
 event status に基づく細かい業務判断は Authorization Server の責務ではない。
 
-Authorization Server は、event token 発行時に、対象 event が token 発行対象として有効かのみ確認する。
+Authorization Server は、event_access token 発行時に、対象 event が token 発行対象として有効かのみ確認する。
 
 Authorization Server が行ってよい確認:
 
@@ -540,7 +427,7 @@ Authorization Server が行ってよい確認:
 - event が token 発行自体に不適切な状態ではない
 ```
 
-Resource Server が行う確認:
+Resource Server 側で扱うべき判断:
 
 ```text
 - draft / open / locked / closed などの業務状態に基づく操作可否
@@ -554,15 +441,15 @@ Resource Server が行う確認:
 
 ## 14. role / permission 変更時の方針
 
+JWT 内の `scope` は発行時点の認可スナップショットである。
+
 Resource Server の主判定は `scope` とする。
 
 role は主に Authorization Server が scope 発行時に使う内部情報である。
 
-JWT 内の `scope` は発行時点の認可スナップショットである。
-
 ### 14.1 write 系 API
 
-`tenant.write` または `events.write` を必要とする API では、Resource Server は DB 上の現在の membership / permission を確認し、token 内の scope が現在も許可可能であることを確認しなければならない。
+`tenant.write` または `events.write` を必要とする API では、Resource Server は DB 上の現在の membership / permission を確認し、token 内の scope が現在も許可可能であることを確認する。
 
 ### 14.2 read 系 API
 
@@ -589,37 +476,16 @@ JWT のみを使用するため、失効は以下の方針とする。
 
 | token_use | TTL |
 |---|---|
-| `login` | 5〜15分 |
 | `tenant_access` | 10〜30分 |
 | `event_access` | 5〜15分 |
 
 ---
 
-## 16. Resource Server 認可
-
-Resource Server は API 実行時に以下を確認する。
-
-```text
-- JWT 署名が有効である
-- iss が信頼済みである
-- aud が自身の Resource Server 論理識別子と一致する
-- exp / nbf が有効である
-- token_use が API に対して妥当である
-- 必要 scope が含まれている
-- token.resource が request path と整合する
-- token.tenant_id が request path の tenantId と一致する
-- event API の場合、token.event_id が request path の eventId と一致する
-- write 系 API の場合、現在 permission を DB で再確認する
-- 業務状態に基づき操作可能である
-```
-
----
-
-## 17. エラー方針
+## 16. エラー方針
 
 外部レスポンスでは、tenant / event / membership の詳細を漏らさない。
 
-### 17.1 Token Exchange が許可されない場合
+### 16.1 Token Exchange が許可されない場合
 
 ```json
 {
@@ -631,15 +497,14 @@ Resource Server は API 実行時に以下を確認する。
 以下は外部上は同じエラーにまとめる。
 
 ```text
-tenant_not_found
 event_not_found
 event_not_in_tenant
-user_not_tenant_member
 user_not_event_member
 invalid_token_use_transition
+token_revoked
 ```
 
-### 17.2 scope が許可されない場合
+### 16.2 scope が許可されない場合
 
 ```json
 {
@@ -648,7 +513,7 @@ invalid_token_use_transition
 }
 ```
 
-### 17.3 audience / resource が許可されない場合
+### 16.3 audience / resource が許可されない場合
 
 ```json
 {
@@ -657,7 +522,7 @@ invalid_token_use_transition
 }
 ```
 
-### 17.4 リクエスト形式が不正な場合
+### 16.4 リクエスト形式が不正な場合
 
 ```json
 {
@@ -668,11 +533,11 @@ invalid_token_use_transition
 
 ---
 
-## 18. 監査ログ仕様
+## 17. 監査ログ仕様
 
 Token Exchange は認可境界であるため、成功・失敗の両方を必ず監査ログに記録する。
 
-### 18.1 記録項目
+### 17.1 記録項目
 
 ```text
 timestamp
@@ -695,7 +560,7 @@ user_agent
 issued_jti
 ```
 
-### 18.2 ログに出してはいけないもの
+### 17.2 ログに出してはいけないもの
 
 ```text
 access token 本体
@@ -705,14 +570,14 @@ authorization code
 password
 ```
 
-### 18.3 result
+### 17.3 result
 
 ```text
 success
 failure
 ```
 
-### 18.4 failure_reason 例
+### 17.4 failure_reason 例
 
 ```text
 invalid_token_use_transition
@@ -731,13 +596,13 @@ scope_exceeds_subject_token
 token_revoked
 ```
 
-### 18.5 成功ログ例
+### 17.5 成功ログ例
 
 ```json
 {
   "timestamp": "2026-05-20T10:00:00Z",
   "request_id": "req-abc",
-  "client_id": "bff-client",
+  "client_id": "client-123",
   "subject": "user-123",
   "session_id": "sess-abc",
   "source_token_use": "tenant_access",
@@ -756,13 +621,13 @@ token_revoked
 }
 ```
 
-### 18.6 失敗ログ例
+### 17.6 失敗ログ例
 
 ```json
 {
   "timestamp": "2026-05-20T10:00:00Z",
   "request_id": "req-def",
-  "client_id": "bff-client",
+  "client_id": "client-123",
   "subject": "user-123",
   "session_id": "sess-abc",
   "source_token_use": "tenant_access",
@@ -783,13 +648,15 @@ token_revoked
 
 ---
 
-## 19. 禁止事項
+## 18. 禁止事項
 
 以下は禁止する。
 
 ```text
-- Browser に access token を返す
-- Browser から直接 Token Exchange する
+- login token を定義する
+- tenant_access → tenant_access の Token Exchange
+- event_access → tenant_access の Token Exchange
+- event_access → event_access の Token Exchange
 - tenant_id を scope に含める
 - event_id を scope に含める
 - x_tenant_id / x_event_id を使う
@@ -798,13 +665,12 @@ token_revoked
 - 複数 audience の access token を発行する
 - Opaque Token を使う
 - Introspection を使う
-- Resource Server 側の最終認可を省略する
 - access token 本体をログに出す
 ```
 
 ---
 
-## 20. 未確定事項
+## 19. 未確定事項
 
 以下は未確定とし、後続設計で決める。
 
@@ -813,20 +679,22 @@ token_revoked
 - 具体的な audience 名
 - 詳細な scope 設計
 - API path の最終形
+- tenant_access token の具体的な発行 API
+- ユーザー認証後の tenant 選択フロー
 - Resource Server ごとの permission 再確認ポリシー
 - jti denylist を常時使うか、強制失効時のみ使うか
 ```
 
 ---
 
-## 21. 最終設計まとめ
+## 20. 最終設計まとめ
 
 ```text
 scope:
   何ができるか
 
 resource:
-  どの tenant / event に対する token を要求するか
+  どの event に対する token を要求するか
 
 tenant_id claim:
   どの tenant に対して発行された token か
@@ -838,10 +706,8 @@ role:
   Authorization Server が scope 発行時に使う内部情報
 
 Authorization Server:
-  Token Exchange 時に token を狭める
-
-BFF:
-  Token Exchange を実行し、token を保持する
+  tenant_access token を発行する
+  tenant_access token から event_access token を発行する
 
 Resource Server:
   JWT claim, scope, resource, path, DB を使って最終認可する
