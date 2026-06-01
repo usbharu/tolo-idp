@@ -19,6 +19,8 @@
 - event_access token の claim
 - client 認可
 - relation service 参照
+- relation service 参照結果の短期キャッシュ
+- relation service キャッシュの内部パージ API
 - audience 検証
 - resource 検証
 - scope 検証
@@ -36,7 +38,6 @@
 - フロントエンド仕様
 - ログイン画面
 - email 入力後のテナント選択 UI
-- tenant_access token の具体的な取得画面フロー
 - Resource Server の詳細実装
 ```
 
@@ -44,9 +45,9 @@
 
 ## 3. 前提
 
-Authorization Server は REST API　を用いてユーザー認証を行う
+Authorization Server は REST API を用いてユーザー認証を行う。
 
-認証成功後、Authorization Server は特定 tenant 文脈を持つ `tenant_access` token を JWT access token として発行する。
+認証成功後、Authorization Server は Spring Security セッションに選択 tenant を保存し、その後の Authorization Code フローで特定 tenant 文脈を持つ `tenant_access` token を JWT access token として発行する。
 
 本仕様では `login` token は定義しない。
 
@@ -54,9 +55,77 @@ Authorization Server は REST API　を用いてユーザー認証を行う
 
 ---
 
-## 4. token 種別
+## 4. ログイン API
 
-### 4.1 tenant_access token
+### 4.1 CSRF token 取得
+
+```http
+GET /api/csrf
+```
+
+レスポンス:
+
+```json
+{
+  "headerName": "X-XSRF-TOKEN",
+  "parameterName": "_csrf",
+  "token": "{csrf_token}"
+}
+```
+
+### 4.2 ログイン
+
+```http
+POST /api/login
+Content-Type: application/json
+
+{
+  "username": "user-123",
+  "password": "password",
+  "tenantId": "tenant-a"
+}
+```
+
+`/api/login` は未認証で呼び出せる。現行実装ではこの endpoint の CSRF 検証は無効化する。
+
+Authorization Server は以下を確認する。
+
+```text
+- tenantId が ID 形式に一致する
+- username / password が IdP 内の user と一致する
+- relation service 上で user が tenant に所属している
+```
+
+成功時は Spring Security セッションを作成し、選択 tenant をセッションに保存する。
+
+レスポンス:
+
+```json
+{
+  "username": "user-123",
+  "tenantId": "tenant-a",
+  "resource": "https://api.example.com/tenants/tenant-a",
+  "authorities": ["ROLE_USER"]
+}
+```
+
+認証失敗は `401 Unauthorized`、tenant 不許可は `403 Forbidden` とする。
+
+### 4.3 ログアウト
+
+```http
+POST /api/logout
+```
+
+認証済みセッションから呼び出す。現行実装では通常の CSRF 検証対象とする。
+
+セッションを破棄し、`204 No Content` を返す。
+
+---
+
+## 5. token 種別
+
+### 5.1 tenant_access token
 
 `tenant_access` token は、認証済みユーザーに対して発行される、特定 tenant 文脈を持つ JWT access token である。
 
@@ -86,7 +155,7 @@ Authorization Server は REST API　を用いてユーザー認証を行う
 }
 ```
 
-### 4.2 event_access token
+### 5.2 event_access token
 
 `event_access` token は、`tenant_access` token から Token Exchange により発行される、特定 event 文脈を持つ JWT access token である。
 
@@ -118,7 +187,7 @@ Authorization Server は REST API　を用いてユーザー認証を行う
 
 ---
 
-## 5. Token Exchange 遷移ルール
+## 6. Token Exchange 遷移ルール
 
 Authorization Server は以下の Token Exchange のみを許可する。
 
@@ -140,7 +209,7 @@ Authorization Server は以下の Token Exchange のみを許可する。
 
 ---
 
-## 6. audience 仕様
+## 7. audience 仕様
 
 `audience` は Resource Server の論理識別子である。
 
@@ -160,7 +229,7 @@ Authorization Server は以下の Token Exchange のみを許可する。
 
 ---
 
-## 7. client 認可仕様
+## 8. client 認可仕様
 
 Authorization Server は `client_id` ごとに以下の設定を持つ。
 
@@ -171,10 +240,11 @@ allowed_grant_types
 allowed_token_exchange_transitions
 allowed_audiences
 allowed_scopes
-max_token_ttl_by_token_use
+tenant_access_ttl_seconds
+event_access_ttl_seconds
 ```
 
-### 7.1 Token Exchange 許可条件
+### 8.1 Token Exchange 許可条件
 
 Authorization Server は Token Exchange Request に対して以下を検証する。
 
@@ -187,7 +257,7 @@ Authorization Server は Token Exchange Request に対して以下を検証す�
 - requested token_use 遷移が client.allowed_token_exchange_transitions に含まれる
 ```
 
-### 7.2 禁止事項
+### 8.2 禁止事項
 
 ```text
 - public client からの Token Exchange
@@ -199,9 +269,9 @@ Authorization Server は Token Exchange Request に対して以下を検証す�
 
 ---
 
-## 8. 暫定 role / scope 仕様
+## 9. 暫定 role / scope 仕様
 
-### 8.1 role
+### 9.1 role
 
 Authorization Server が scope 発行可否の判定に使う暫定 role:
 
@@ -215,7 +285,7 @@ staff
 
 `admin` は IdP 内部設定または将来の本番 relation service で扱う可能性がある role であり、現時点の `tolo-relation-stub` からは返却されない。
 
-### 8.2 scope
+### 9.2 scope
 
 暫定 scope:
 
@@ -228,7 +298,7 @@ events.write
 
 詳細な scope 設計は後で再検討する。
 
-### 8.3 role → scope 対応表
+### 9.3 role → scope 対応表
 
 | role | 許可 scope |
 |---|---|
@@ -236,7 +306,7 @@ events.write
 | `admin` | `tenant.read`, `tenant.write`, `events.read`, `events.write` |
 | `staff` | `tenant.read`, `events.read` |
 
-### 8.4 role の扱い
+### 9.4 role の扱い
 
 role は Authorization Server が scope 発行可否を判定するための内部情報である。
 
@@ -246,23 +316,23 @@ relation service から取得した role は、JWT claim へ転記せず、scope
 
 ---
 
-## 9. relation service 参照仕様
+## 10. relation service 参照仕様
 
 Authorization Server は tenant / event の所属関係、および subject user の role を relation service から取得する。
 
 現時点では `tolo-relation-stub` を暫定 relation service 契約として扱う。
 
-### 9.1 参照 API
+### 10.1 参照 API
 
-Authorization Server は、resource から得た `tenantId` と subject token の `sub` を用いて、以下の API を参照する。
+Authorization Server は、resource から得た `tenantId` と subject user id を用いて、以下の API を参照する。
 
 ```http
 GET /tenants/{tenantId}/users/{userId}
 ```
 
-`userId` には JWT の `sub` をそのまま使う。
+Token Exchange では `userId` に JWT の `sub` をそのまま使う。ログイン時は認証済み user の username をそのまま使う。
 
-### 9.2 response
+### 10.2 response
 
 relation service は以下の JSON を返す。
 
@@ -287,7 +357,7 @@ owner
 staff
 ```
 
-### 9.3 relation model 制約
+### 10.3 relation model 制約
 
 relation service のモデル制約は以下とする。
 
@@ -300,7 +370,7 @@ relation service のモデル制約は以下とする。
 
 例: tenant role が `staff` で event role が `owner` の user は成立する。
 
-### 9.4 relation lookup の扱い
+### 10.4 relation lookup の扱い
 
 Authorization Server は relation service の結果を以下のように扱う。
 
@@ -315,21 +385,85 @@ relation service が `404` を返した場合、対象 tenant は token 発行�
 
 relation service への通信失敗、timeout、不正 response、未知 role は、token 発行不可として扱う。
 
-### 9.5 IdP 側の入口制約
+### 10.5 IdP 側の入口制約
 
 `tolo-relation-stub` は ID 値を単純な文字列として扱うが、Authorization Server は本仕様の ID 形式制限を入口で必ず適用する。
 
 Authorization Server は、ID 形式検証に失敗した値を relation service へ問い合わせてはならない。
 
+### 10.6 relation lookup cache
+
+Authorization Server は relation service の成功レスポンスを DB に短期間キャッシュする。
+
+キャッシュキー:
+
+```text
+tenant_id
+user_id
+```
+
+保存内容:
+
+```text
+- TenantMembership payload
+- cached_at
+- expires_at
+```
+
+キャッシュ TTL は `tolo-idp.relation.cache.ttl` で設定し、デフォルトは 5 分とする。
+
+キャッシュの扱い:
+
+```text
+- expires_at > now の成功レスポンスのみを hit とする
+- miss または期限切れの場合は relation service に問い合わせる
+- relation service の成功レスポンスのみを保存する
+- 404、membership 不足、通信失敗、timeout、不正 response、未知 role はキャッシュしない
+- tenantId は ID 形式を検証し、検証失敗時は relation service へ問い合わせない
+- tenantId / userId は trim、大文字小文字変換、Unicode 正規化を行わず、そのままキャッシュキーに使う
+```
+
+### 10.7 relation cache purge API
+
+relation cache は内部 API でパージできる。
+
+```http
+DELETE /internal/relation-cache
+```
+
+すべての relation cache entry を削除し、`204 No Content` を返す。
+
+```http
+DELETE /internal/relation-cache/tenants/{tenantId}/users/{userId}
+```
+
+指定した `(tenantId, userId)` の relation cache entry のみを削除し、`204 No Content` を返す。
+
+`tenantId` は ID 形式を検証する。`userId` は trim、大文字小文字変換、Unicode 正規化を行わず、path value をそのまま削除キーに使う。
+
+この API は server 間通信用の内部 API であり、Spring Security X.509 client certificate authentication で保護する。
+
+認可条件:
+
+```text
+- client certificate から抽出された subject/CN が `tolo-idp.relation.cache.admin-subjects` に含まれる
+- 許可された subject には `ROLE_RELATION_CACHE_ADMIN` を付与する
+- allow-list のデフォルトは空であり、未設定ではパージ API は許可されない
+```
+
+CSRF はこの内部 API では無効化する。
+
+X.509 client certificate がない場合は `401 Unauthorized`、allow-list 外の subject/CN の場合は `403 Forbidden` とする。
+
 ---
 
-## 10. scope 発行ルール
+## 11. scope 発行ルール
 
 Authorization Server は、要求された `scope` を暗黙に縮小して発行してはならない。
 
 要求 scope に許可外 scope が含まれる場合、Authorization Server は `invalid_scope` を返す。
 
-### 10.1 tenant_access token 発行時
+### 11.1 tenant_access token 発行時
 
 `tenant_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
 
@@ -342,7 +476,7 @@ requested_scope ⊆ tenant_role.allowed_scopes
 
 `admin` を使う場合は、IdP 内部設定または将来の本番 relation service の role mapping により `tenant_role` へ割り当てる。`tolo-relation-stub` の response から `admin` を推定してはならない。
 
-### 10.2 event_access token 発行時
+### 11.2 event_access token 発行時
 
 `event_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
 
@@ -360,15 +494,15 @@ resource の `eventId` に一致する event が `events` に存在しない場�
 
 ---
 
-## 11. resource 仕様
+## 12. resource 仕様
 
-### 11.1 採用方針
+### 12.1 採用方針
 
 Token Exchange Request では、対象 event の指定に `resource` パラメータを使用する。
 
 `x_tenant_id` / `x_event_id` は使用しない。
 
-### 11.2 tenant resource
+### 12.2 tenant resource
 
 `tenant_access` token の resource は以下の形式とする。
 
@@ -376,7 +510,7 @@ Token Exchange Request では、対象 event の指定に `resource` パラメ�
 https://api.example.com/tenants/{tenantId}
 ```
 
-### 11.3 event resource
+### 12.3 event resource
 
 `event_access` token を要求する場合、Token Exchange Request の `resource` は以下の形式とする。
 
@@ -384,7 +518,7 @@ https://api.example.com/tenants/{tenantId}
 https://api.example.com/tenants/{tenantId}/events/{eventId}
 ```
 
-### 11.4 resource 検証
+### 12.4 resource 検証
 
 Authorization Server は `resource` について以下を検証する。
 
@@ -399,7 +533,7 @@ Authorization Server は `resource` について以下を検証する。
 - relation service 上で subject user が対象 event にアクセス可能である
 ```
 
-### 11.5 ID 形式
+### 12.5 ID 形式
 
 tenantId / eventId は以下の形式に限定する。
 
@@ -417,9 +551,9 @@ tenantId / eventId は以下の形式に限定する。
 
 ---
 
-## 12. JWT 仕様
+## 13. JWT 仕様
 
-### 12.1 token 形式
+### 13.1 token 形式
 
 Access Token はすべて JWT とする。
 
@@ -429,7 +563,7 @@ Access Token はすべて JWT とする。
 - Resource Server が JWT を自己検証する
 ```
 
-### 12.2 共通必須 claim
+### 13.2 共通必須 claim
 
 ```text
 iss
@@ -445,20 +579,20 @@ exp
 jti
 ```
 
-### 12.3 tenant_access token 必須 claim
+### 13.3 tenant_access token 必須 claim
 
 ```text
 tenant_id
 ```
 
-### 12.4 event_access token 必須 claim
+### 13.4 event_access token 必須 claim
 
 ```text
 tenant_id
 event_id
 ```
 
-### 12.5 JWT に含めない claim
+### 13.5 JWT に含めない claim
 
 以下の claim は JWT に含めない。
 
@@ -470,9 +604,9 @@ event_role
 
 ---
 
-## 13. Token Exchange Request
+## 14. Token Exchange Request
 
-### 13.1 event_access token 発行
+### 14.1 event_access token 発行
 
 ```http
 POST /oauth2/token
@@ -498,7 +632,7 @@ Authorization Server は以下を確認する。
 - requested audience が client に許可されている
 - requested resource が event resource 形式である
 - subject_token.tenant_id == resource の tenantId
-- relation service に subject_token.sub と resource の tenantId を問い合わせる
+- relation service cache または relation service に subject_token.sub と resource の tenantId を問い合わせる
 - relation service の tenant.role が null ではない
 - resource の eventId が relation service の events[].id に存在する
 - requested_scope が subject_token.scope を超えていない
@@ -507,7 +641,7 @@ Authorization Server は以下を確認する。
 
 ---
 
-## 14. event status の扱い
+## 15. event status の扱い
 
 event status に基づく細かい業務判断は Authorization Server の責務ではない。
 
@@ -534,7 +668,7 @@ Resource Server 側で扱うべき判断:
 
 ---
 
-## 15. role / permission 変更時の方針
+## 16. role / permission 変更時の方針
 
 JWT 内の `scope` は発行時点の認可スナップショットである。
 
@@ -542,11 +676,11 @@ Resource Server の主判定は `scope` とする。
 
 role は主に Authorization Server が scope 発行時に使う内部情報である。
 
-### 15.1 write 系 API
+### 16.1 write 系 API
 
 `tenant.write` または `events.write` を必要とする API では、Resource Server は DB 上の現在の membership / permission を確認し、token 内の scope が現在も許可可能であることを確認する。
 
-### 15.2 read 系 API
+### 16.2 read 系 API
 
 read 系 API は短命 token を基本とする。
 
@@ -554,7 +688,7 @@ read 系 API は短命 token を基本とする。
 
 ---
 
-## 16. 失効方針
+## 17. 失効方針
 
 JWT のみを使用するため、失効は以下の方針とする。
 
@@ -565,22 +699,24 @@ JWT のみを使用するため、失効は以下の方針とする。
 - denylist の TTL は token の exp までとする
 ```
 
-### 16.1 token TTL
+### 17.1 token TTL
 
-暫定 TTL:
+現行実装のデフォルト TTL:
 
 | token_use | TTL |
 |---|---|
-| `tenant_access` | 10〜30分 |
-| `event_access` | 5〜15分 |
+| `tenant_access` | 15分 |
+| `event_access` | 10分 |
+
+client policy の `tenant_access_ttl_seconds` / `event_access_ttl_seconds` により client ごとに設定する。
 
 ---
 
-## 17. エラー方針
+## 18. エラー方針
 
 外部レスポンスでは、tenant / event / membership の詳細を漏らさない。
 
-### 17.1 Token Exchange が許可されない場合
+### 18.1 Token Exchange が許可されない場合
 
 ```json
 {
@@ -606,7 +742,9 @@ token_revoked
 
 relation service の `404 tenant not found`、通信失敗、timeout、不正 response、未知 role、membership 不足は、外部レスポンスで詳細を区別しない。
 
-### 17.2 scope が許可されない場合
+現行実装では Spring Authorization Server の `OAuth2Error` として error code を返す。`error_description` の具体的な文言は固定しない。
+
+### 18.2 scope が許可されない場合
 
 ```json
 {
@@ -615,7 +753,7 @@ relation service の `404 tenant not found`、通信失敗、timeout、不正 re
 }
 ```
 
-### 17.3 audience / resource が許可されない場合
+### 18.3 audience / resource が許可されない場合
 
 ```json
 {
@@ -624,7 +762,7 @@ relation service の `404 tenant not found`、通信失敗、timeout、不正 re
 }
 ```
 
-### 17.4 リクエスト形式が不正な場合
+### 18.4 リクエスト形式が不正な場合
 
 ```json
 {
@@ -635,18 +773,17 @@ relation service の `404 tenant not found`、通信失敗、timeout、不正 re
 
 ---
 
-## 18. 監査ログ仕様
+## 19. 監査ログ仕様
 
 Token Exchange は認可境界であるため、成功・失敗の両方を必ず監査ログに記録する。
 
-### 18.1 記録項目
+### 19.1 記録項目
 
 ```text
 timestamp
 request_id
 client_id
 subject
-session_id
 source_token_use
 requested_token_use
 requested_audience
@@ -662,7 +799,11 @@ user_agent
 issued_jti
 ```
 
-### 18.2 ログに出してはいけないもの
+現行実装では Token Exchange の監査ログを DB の `idp_audit_log` と logger `audit.token` に記録する。
+
+`request_id`、`source_ip`、`user_agent` は項目として保持するが、現行実装では request からの自動設定は行わない。
+
+### 19.2 ログに出してはいけないもの
 
 ```text
 access token 本体
@@ -672,14 +813,14 @@ authorization code
 password
 ```
 
-### 18.3 result
+### 19.3 result
 
 ```text
 success
 failure
 ```
 
-### 18.4 failure_reason 例
+### 19.4 failure_reason 例
 
 ```text
 invalid_token_use_transition
@@ -701,7 +842,7 @@ scope_exceeds_subject_token
 token_revoked
 ```
 
-### 18.5 成功ログ例
+### 19.5 成功ログ例
 
 ```json
 {
@@ -709,7 +850,6 @@ token_revoked
   "request_id": "req-abc",
   "client_id": "client-123",
   "subject": "user-123",
-  "session_id": "sess-abc",
   "source_token_use": "tenant_access",
   "requested_token_use": "event_access",
   "requested_audience": "backend-api",
@@ -726,7 +866,7 @@ token_revoked
 }
 ```
 
-### 18.6 失敗ログ例
+### 19.6 失敗ログ例
 
 ```json
 {
@@ -734,7 +874,6 @@ token_revoked
   "request_id": "req-def",
   "client_id": "client-123",
   "subject": "user-123",
-  "session_id": "sess-abc",
   "source_token_use": "tenant_access",
   "requested_token_use": "event_access",
   "requested_audience": "backend-api",
@@ -753,7 +892,7 @@ token_revoked
 
 ---
 
-## 19. 禁止事項
+## 20. 禁止事項
 
 以下は禁止する。
 
@@ -772,11 +911,12 @@ token_revoked
 - Introspection を使う
 - access token 本体をログに出す
 - relation service の詳細な失敗理由を外部レスポンスに出す
+- relation service の失敗レスポンスを cache hit として扱う
 ```
 
 ---
 
-## 20. 未確定事項
+## 21. 未確定事項
 
 以下は未確定とし、後続設計で決める。
 
@@ -785,7 +925,6 @@ token_revoked
 - 具体的な audience 名
 - 詳細な scope 設計
 - API path の最終形
-- tenant_access token の具体的な発行 API
 - ユーザー認証後の tenant 選択フロー
 - Resource Server ごとの permission 再確認ポリシー
 - jti denylist を常時使うか、強制失効時のみ使うか
@@ -794,7 +933,34 @@ token_revoked
 
 ---
 
-## 21. 最終設計まとめ
+## 22. 現行実装の設定デフォルト
+
+```text
+tolo-idp.issuer=http://localhost:8080
+tolo-idp.resource.allowed-hosts=api.example.com
+tolo-idp.relation.base-url=http://localhost:8081
+tolo-idp.relation.connect-timeout=2s
+tolo-idp.relation.read-timeout=3s
+tolo-idp.relation.cache.ttl=5m
+tolo-idp.relation.cache.admin-subjects=[]
+tolo-idp.token.tenant-access-ttl=15m
+tolo-idp.token.event-access-ttl=10m
+```
+
+seed data が有効な場合の開発用デフォルト:
+
+```text
+user=user-123
+password=password
+client_id=client-123
+client_secret=secret
+allowed_audience=backend-api
+allowed_scopes=tenant.read,tenant.write,events.read,events.write
+```
+
+---
+
+## 23. 最終設計まとめ
 
 ```text
 scope:
