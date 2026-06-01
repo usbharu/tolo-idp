@@ -25,7 +25,7 @@ class RelationCacheController(
         @PathVariable userId: String,
     ): ResponseEntity<Void> {
         resourceParser.requireValidId(tenantId)
-        cacheRepository.deleteOne(tenantId, userId)
+        cacheRepository.deleteById(RelationMembershipCacheId(tenantId, userId))
         return ResponseEntity.noContent().build()
     }
 }

@@ -2,6 +2,8 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.client.ClientPolicyRepository
 import dev.usbharu.toloidp.relation.EventMembership
+import dev.usbharu.toloidp.relation.RelationMembershipCache
+import dev.usbharu.toloidp.relation.RelationMembershipCacheId
 import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.relation.TenantMembership
@@ -74,16 +76,12 @@ class SecurityComponentTests(
             },
         )
         cacheRepository.deleteAll()
-        cacheRepository.put(
-            tenantId = "tenant-a",
-            userId = "user-123",
-            membership = TenantMembership(
+        cacheMembership(
+            TenantMembership(
                 tenantId = "tenant-a",
                 tenantRole = RelationRole.OWNER,
                 events = listOf(EventMembership("event-1", RelationRole.STAFF)),
             ),
-            cachedAt = Instant.EPOCH,
-            expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
         )
     }
 
@@ -141,16 +139,12 @@ class SecurityComponentTests(
     @Test
     fun tenantAuthorizationValidatorRejectsScopeOutsideRole() {
         cacheRepository.deleteAll()
-        cacheRepository.put(
-            tenantId = "tenant-a",
-            userId = "user-123",
-            membership = TenantMembership(
+        cacheMembership(
+            TenantMembership(
                 tenantId = "tenant-a",
                 tenantRole = RelationRole.STAFF,
                 events = emptyList(),
             ),
-            cachedAt = Instant.EPOCH,
-            expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
         )
         val validator = TenantAuthorizationValidator(clientPolicyRepository, resourceParser, relationService, scopePolicy)
 
@@ -274,6 +268,17 @@ class SecurityComponentTests(
                 "${OAuth2ParameterNames.STATE}=state-1",
             ).joinToString("&")
         }
+
+    private fun cacheMembership(membership: TenantMembership) {
+        cacheRepository.save(
+            RelationMembershipCache(
+                cacheId = RelationMembershipCacheId(membership.tenantId, "user-123"),
+                membership = membership,
+                cachedAt = Instant.EPOCH,
+                expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
+            ),
+        )
+    }
 
     private fun authorizationContext(
         resource: String = "https://api.example.com/tenants/tenant-a",

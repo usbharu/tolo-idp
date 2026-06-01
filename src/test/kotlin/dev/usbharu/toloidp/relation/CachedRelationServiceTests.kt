@@ -59,13 +59,7 @@ class CachedRelationServiceTests(
 
     @Test
     fun expiredRowIsIgnoredAndRefreshed() {
-        cacheRepository.put(
-            tenantId = "tenant-a",
-            userId = "user-123",
-            membership = sampleMembership("tenant-a", "event-old"),
-            cachedAt = now.minusSeconds(600),
-            expiresAt = now.minusSeconds(1),
-        )
+        cacheMembership("tenant-a", "user-123", sampleMembership("tenant-a", "event-old"), now.minusSeconds(600), now.minusSeconds(1))
         val delegate = RecordingRelationService()
         val service = CachedRelationService(delegate, cacheRepository, properties, resourceParser, clock)
 
@@ -73,7 +67,7 @@ class CachedRelationServiceTests(
 
         assertEquals(sampleMembership("tenant-a"), membership)
         assertEquals(listOf("tenant-a" to "user-123"), delegate.calls)
-        assertEquals(sampleMembership("tenant-a"), cacheRepository.findValid("tenant-a", "user-123", now))
+        assertEquals(sampleMembership("tenant-a"), cachedMembership("tenant-a", "user-123"))
     }
 
     @Test
@@ -86,20 +80,20 @@ class CachedRelationServiceTests(
         }
 
         assertEquals(0, cacheRowCount())
-        assertNull(cacheRepository.findValid("tenant-a", "user-123", now))
+        assertNull(cachedMembership("tenant-a", "user-123"))
     }
 
     @Test
     fun purgeAllAndPurgeOneRemoveExpectedRows() {
-        cacheRepository.put("tenant-a", "user-1", sampleMembership("tenant-a"), now, now.plusSeconds(300))
-        cacheRepository.put("tenant-a", "user-2", sampleMembership("tenant-a"), now, now.plusSeconds(300))
-        cacheRepository.put("tenant-b", "user-1", sampleMembership("tenant-b"), now, now.plusSeconds(300))
+        cacheMembership("tenant-a", "user-1", sampleMembership("tenant-a"), now, now.plusSeconds(300))
+        cacheMembership("tenant-a", "user-2", sampleMembership("tenant-a"), now, now.plusSeconds(300))
+        cacheMembership("tenant-b", "user-1", sampleMembership("tenant-b"), now, now.plusSeconds(300))
 
-        cacheRepository.deleteOne("tenant-a", "user-1")
+        cacheRepository.deleteById(RelationMembershipCacheId("tenant-a", "user-1"))
 
-        assertNull(cacheRepository.findValid("tenant-a", "user-1", now))
-        assertEquals(sampleMembership("tenant-a"), cacheRepository.findValid("tenant-a", "user-2", now))
-        assertEquals(sampleMembership("tenant-b"), cacheRepository.findValid("tenant-b", "user-1", now))
+        assertNull(cachedMembership("tenant-a", "user-1"))
+        assertEquals(sampleMembership("tenant-a"), cachedMembership("tenant-a", "user-2"))
+        assertEquals(sampleMembership("tenant-b"), cachedMembership("tenant-b", "user-1"))
 
         cacheRepository.deleteAll()
 
@@ -108,6 +102,27 @@ class CachedRelationServiceTests(
 
     private fun cacheRowCount(): Int =
         cacheRepository.count().toInt()
+
+    private fun cacheMembership(
+        tenantId: String,
+        userId: String,
+        membership: TenantMembership,
+        cachedAt: Instant,
+        expiresAt: Instant,
+    ) {
+        cacheRepository.save(
+            RelationMembershipCache(
+                cacheId = RelationMembershipCacheId(tenantId, userId),
+                membership = membership,
+                cachedAt = cachedAt,
+                expiresAt = expiresAt,
+            ),
+        )
+    }
+
+    private fun cachedMembership(tenantId: String, userId: String): TenantMembership? =
+        cacheRepository.findByCacheIdTenantIdAndCacheIdUserIdAndExpiresAtAfter(tenantId, userId, now)
+            ?.membership
 
     private fun sampleMembership(tenantId: String, eventId: String = "event-1"): TenantMembership =
         TenantMembership(

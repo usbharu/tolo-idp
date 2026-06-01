@@ -5,6 +5,8 @@ import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientPolicyRepository
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.relation.EventMembership
+import dev.usbharu.toloidp.relation.RelationMembershipCache
+import dev.usbharu.toloidp.relation.RelationMembershipCacheId
 import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.scope.RelationRole
@@ -59,19 +61,20 @@ class TokenExchangeEndpointTests(
         jtiDenylistRepository.deleteAll()
         cacheRepository.deleteAll()
         ensurePublicPolicyClient()
-        cacheRepository.put(
-            tenantId = "tenant-a",
-            userId = "user-123",
-            membership = TenantMembership(
-                tenantId = "tenant-a",
-                tenantRole = RelationRole.OWNER,
-                events = listOf(
-                    EventMembership("event-1", RelationRole.OWNER),
-                    EventMembership("event-staff", RelationRole.STAFF),
+        cacheRepository.save(
+            RelationMembershipCache(
+                cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+                membership = TenantMembership(
+                    tenantId = "tenant-a",
+                    tenantRole = RelationRole.OWNER,
+                    events = listOf(
+                        EventMembership("event-1", RelationRole.OWNER),
+                        EventMembership("event-staff", RelationRole.STAFF),
+                    ),
                 ),
+                cachedAt = Instant.EPOCH,
+                expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
             ),
-            cachedAt = Instant.EPOCH,
-            expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
         )
     }
 
@@ -355,6 +358,7 @@ class TokenExchangeEndpointTests(
                     .build(),
             )
         }
+        clientPolicyRepository.deleteById(PUBLIC_POLICY_CLIENT_ID)
         clientPolicyRepository.save(
             ClientPolicy(
                 clientId = PUBLIC_POLICY_CLIENT_ID,

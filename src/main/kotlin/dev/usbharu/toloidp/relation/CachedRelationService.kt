@@ -21,15 +21,19 @@ class CachedRelationService(
     override fun getMembership(tenantId: String, userId: String): TenantMembership {
         resourceParser.requireValidId(tenantId)
         val now = Instant.now(clock)
-        cacheRepository.findValid(tenantId, userId, now)?.let { return it }
+        cacheRepository.findByCacheIdTenantIdAndCacheIdUserIdAndExpiresAtAfter(tenantId, userId, now)
+            ?.let { return it.membership }
 
         val membership = delegate.getMembership(tenantId, userId)
-        cacheRepository.put(
-            tenantId = tenantId,
-            userId = userId,
-            membership = membership,
-            cachedAt = now,
-            expiresAt = now.plus(properties.relation.cache.ttl),
+        val cacheId = RelationMembershipCacheId(tenantId, userId)
+        cacheRepository.deleteById(cacheId)
+        cacheRepository.save(
+            RelationMembershipCache(
+                cacheId = cacheId,
+                membership = membership,
+                cachedAt = now,
+                expiresAt = now.plus(properties.relation.cache.ttl),
+            ),
         )
         return membership
     }

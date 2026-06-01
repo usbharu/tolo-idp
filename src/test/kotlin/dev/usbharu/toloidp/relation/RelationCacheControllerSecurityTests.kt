@@ -51,20 +51,20 @@ class RelationCacheControllerSecurityTests(
 
     @Test
     fun allowListedCertificatePrincipalCanPurgeAll() {
-        cacheRepository.put("tenant-a", "user-1", sampleMembership("tenant-a"), Instant.EPOCH, future)
-        cacheRepository.put("tenant-b", "user-2", sampleMembership("tenant-b"), Instant.EPOCH, future)
+        cacheMembership("tenant-a", "user-1", sampleMembership("tenant-a"))
+        cacheMembership("tenant-b", "user-2", sampleMembership("tenant-b"))
 
         mockMvc.perform(delete("/internal/relation-cache").with(x509(adminCertificate)))
             .andExpect(status().isNoContent)
 
-        kotlin.test.assertNull(cacheRepository.findValid("tenant-a", "user-1", Instant.now()))
-        kotlin.test.assertNull(cacheRepository.findValid("tenant-b", "user-2", Instant.now()))
+        kotlin.test.assertNull(cachedMembership("tenant-a", "user-1"))
+        kotlin.test.assertNull(cachedMembership("tenant-b", "user-2"))
     }
 
     @Test
     fun allowListedCertificatePrincipalCanPurgeOne() {
-        cacheRepository.put("tenant-a", "user-1", sampleMembership("tenant-a"), Instant.EPOCH, future)
-        cacheRepository.put("tenant-a", "user-2", sampleMembership("tenant-a"), Instant.EPOCH, future)
+        cacheMembership("tenant-a", "user-1", sampleMembership("tenant-a"))
+        cacheMembership("tenant-a", "user-2", sampleMembership("tenant-a"))
 
         mockMvc.perform(
             delete("/internal/relation-cache/tenants/tenant-a/users/user-1")
@@ -72,9 +72,24 @@ class RelationCacheControllerSecurityTests(
         )
             .andExpect(status().isNoContent)
 
-        kotlin.test.assertNull(cacheRepository.findValid("tenant-a", "user-1", Instant.now()))
-        kotlin.test.assertEquals(sampleMembership("tenant-a"), cacheRepository.findValid("tenant-a", "user-2", Instant.now()))
+        kotlin.test.assertNull(cachedMembership("tenant-a", "user-1"))
+        kotlin.test.assertEquals(sampleMembership("tenant-a"), cachedMembership("tenant-a", "user-2"))
     }
+
+    private fun cacheMembership(tenantId: String, userId: String, membership: TenantMembership) {
+        cacheRepository.save(
+            RelationMembershipCache(
+                cacheId = RelationMembershipCacheId(tenantId, userId),
+                membership = membership,
+                cachedAt = Instant.EPOCH,
+                expiresAt = future,
+            ),
+        )
+    }
+
+    private fun cachedMembership(tenantId: String, userId: String): TenantMembership? =
+        cacheRepository.findByCacheIdTenantIdAndCacheIdUserIdAndExpiresAtAfter(tenantId, userId, Instant.now())
+            ?.membership
 
     private fun sampleMembership(tenantId: String): TenantMembership =
         TenantMembership(

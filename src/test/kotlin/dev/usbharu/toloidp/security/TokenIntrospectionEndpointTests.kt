@@ -237,6 +237,7 @@ class TokenIntrospectionEndpointTests(
             )
         }
 
+        clientPolicyRepository.deleteById(PUBLIC_POLICY_CLIENT_ID)
         clientPolicyRepository.save(
             ClientPolicy(
                 clientId = PUBLIC_POLICY_CLIENT_ID,
