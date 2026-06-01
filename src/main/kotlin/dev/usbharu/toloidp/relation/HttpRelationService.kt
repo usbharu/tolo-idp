@@ -2,6 +2,7 @@ package dev.usbharu.toloidp.relation
 
 import dev.usbharu.toloidp.config.IdpProperties
 import dev.usbharu.toloidp.resource.ResourceParser
+import dev.usbharu.toloidp.resource.ResourceValidationException
 import dev.usbharu.toloidp.scope.RelationRole
 import dev.usbharu.toloidp.scope.UnknownRelationRoleException
 import org.springframework.http.HttpStatus
@@ -36,9 +37,13 @@ class HttpRelationService(
         }
         val roleValue = response.tenant.role ?: throw RelationLookupException("user_not_tenant_member")
         val tenantRole = parseRole(roleValue)
-        val events = response.events.map {
-            resourceParser.requireValidId(it.id)
-            EventMembership(it.id, parseRole(it.role))
+        val events = try {
+            response.events.map {
+                resourceParser.requireValidId(it.id)
+                EventMembership(it.id, parseRole(it.role))
+            }
+        } catch (ex: ResourceValidationException) {
+            throw RelationLookupException("relation_response_invalid")
         }
         return TenantMembership(tenantId, tenantRole, events)
     }

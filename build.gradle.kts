@@ -4,6 +4,7 @@ plugins {
     id("org.springframework.boot") version "4.0.6"
     id("io.spring.dependency-management") version "1.1.7"
     id("org.graalvm.buildtools.native") version "0.11.5"
+    id("org.jetbrains.kotlinx.kover") version "0.9.8"
 }
 
 group = "dev.usbharu"
@@ -58,4 +59,27 @@ kotlin {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+kover {
+    reports {
+        filters {
+            includes {
+                classes("dev.usbharu.toloidp.*")
+            }
+            excludes {
+                classes(
+                    "dev.usbharu.toloidp.ToloIdpApplication",
+                    "dev.usbharu.toloidp.ToloIdpApplicationKt",
+                    "dev.usbharu.toloidp.*__*",
+                    "dev.usbharu.toloidp.config.*",
+                )
+            }
+        }
+        verify {
+            rule {
+                minBound(90)
+            }
+        }
+    }
 }

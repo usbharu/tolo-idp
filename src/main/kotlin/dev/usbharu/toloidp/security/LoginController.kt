@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpSession
 import dev.usbharu.toloidp.relation.RelationLookupException
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
+import dev.usbharu.toloidp.resource.ResourceValidationException
 import dev.usbharu.toloidp.tenant.SELECTED_TENANT_SESSION_ATTRIBUTE
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -34,7 +35,11 @@ class LoginController(
         @RequestBody request: LoginRequest,
         httpRequest: HttpServletRequest,
     ): ResponseEntity<Any> {
-        resourceParser.requireValidId(request.tenantId)
+        try {
+            resourceParser.requireValidId(request.tenantId)
+        } catch (ex: ResourceValidationException) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid tenantId")
+        }
         val user = try {
             userDetailsService.loadUserByUsername(request.username)
         } catch (ex: RuntimeException) {
