@@ -21,7 +21,6 @@ import org.springframework.core.annotation.Order
 import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.simple.JdbcClient
-import org.springframework.security.config.Customizer
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration
 import org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization.OAuth2AuthorizationServerConfigurer
@@ -29,6 +28,9 @@ import org.springframework.security.core.userdetails.User
 import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.oauth2.core.AuthorizationGrantType
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod
+import org.springframework.security.oauth2.core.OAuth2Token
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.oauth2.jwt.JwtEncoder
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder
@@ -36,6 +38,7 @@ import org.springframework.security.oauth2.server.authorization.JdbcOAuth2Author
 import org.springframework.security.oauth2.server.authorization.JdbcOAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationServerMetadataClaimNames
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenExchangeAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository
@@ -45,15 +48,20 @@ import org.springframework.security.oauth2.server.authorization.token.Delegating
 import org.springframework.security.oauth2.server.authorization.token.JwtGenerator
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
 import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2AuthorizationCodeRequestAuthenticationConverter
-import org.springframework.security.oauth2.core.OAuth2Token
 import org.springframework.security.provisioning.JdbcUserDetailsManager
-import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
+import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken
 import javax.sql.DataSource
+import java.security.KeyFactory
 import java.security.KeyPairGenerator
+import java.security.MessageDigest
 import java.security.interfaces.RSAPrivateKey
+import java.security.interfaces.RSAPrivateCrtKey
 import java.security.interfaces.RSAPublicKey
+import java.security.spec.PKCS8EncodedKeySpec
+import java.security.spec.RSAPublicKeySpec
+import java.util.Base64
 import java.util.UUID
 
 @Configuration
@@ -92,6 +100,25 @@ class SecurityConfig {
 
     @Bean
     @Order(1)
+    fun disabledRevocationSecurityFilterChain(http: HttpSecurity): SecurityFilterChain {
+        http.securityMatcher("/oauth2/revoke")
+            .authorizeHttpRequests {
+                it.anyRequest().denyAll()
+            }
+            .csrf { it.disable() }
+            .formLogin { it.disable() }
+            .logout { it.disable() }
+            .exceptionHandling {
+                it.authenticationEntryPoint(HttpStatusEntryPoint(HttpStatus.NOT_FOUND))
+                it.accessDeniedHandler { _, response, _ ->
+                    response.sendError(HttpStatus.NOT_FOUND.value())
+                }
+            }
+        return http.build()
+    }
+
+    @Bean
+    @Order(2)
     fun authorizationServerSecurityFilterChain(
         http: HttpSecurity,
         registeredClientRepository: RegisteredClientRepository,
@@ -114,6 +141,27 @@ class SecurityConfig {
                 .authorizationConsentService(authorizationConsentService)
                 .authorizationServerSettings(settings)
                 .tokenGenerator(tokenGenerator)
+                .authorizationServerMetadataEndpoint { metadataEndpoint ->
+                    metadataEndpoint.authorizationServerMetadataCustomizer { metadata ->
+                        metadata.claims { claims ->
+                            claims.remove(OAuth2AuthorizationServerMetadataClaimNames.REVOCATION_ENDPOINT)
+                            claims.remove(OAuth2AuthorizationServerMetadataClaimNames.REVOCATION_ENDPOINT_AUTH_METHODS_SUPPORTED)
+                        }
+                        metadata.grantTypes {
+                            it.clear()
+                            it.add(AuthorizationGrantType.AUTHORIZATION_CODE.value)
+                            it.add(AuthorizationGrantType.TOKEN_EXCHANGE.value)
+                        }
+                        metadata.tokenEndpointAuthenticationMethods {
+                            it.clear()
+                            it.add(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+                        }
+                        metadata.tokenIntrospectionEndpointAuthenticationMethods {
+                            it.clear()
+                            it.add(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+                        }
+                    }
+                }
                 .authorizationEndpoint { authorizationEndpoint ->
                 authorizationEndpoint.authorizationRequestConverters { converters ->
                     converters.removeIf { it is OAuth2AuthorizationCodeRequestAuthenticationConverter }
@@ -162,7 +210,7 @@ class SecurityConfig {
     }
 
     @Bean
-    @Order(2)
+    @Order(3)
     fun applicationSecurityFilterChain(http: HttpSecurity): SecurityFilterChain {
         http.authorizeHttpRequests {
             it.requestMatchers("/actuator/health", "/api/login").permitAll()
@@ -208,15 +256,64 @@ class SecurityConfig {
         PasswordEncoderFactories.createDelegatingPasswordEncoder()
 
     @Bean
-    fun jwkSource(): JWKSource<SecurityContext> {
+    fun jwkSource(properties: IdpProperties): JWKSource<SecurityContext> {
+        val rsaKey = configuredRsaKey(properties.jwk) ?: ephemeralRsaKey(properties.jwk)
+        return ImmutableJWKSet(JWKSet(rsaKey))
+    }
+
+    private fun configuredRsaKey(properties: IdpProperties.Jwk): RSAKey? {
+        val privateKeyPem = properties.privateKeyPem?.takeIf { it.isNotBlank() }
+            ?: properties.privateKeyLocation?.let {
+                if (!it.exists()) {
+                    throw IllegalStateException("Configured tolo-idp.jwk.private-key-location does not exist: $it")
+                }
+                it.inputStream.bufferedReader().use { reader -> reader.readText() }
+            }
+            ?: return null
+        val privateKey = parsePkcs8RsaPrivateKey(privateKeyPem)
+        val publicKey = derivePublicKey(privateKey)
+        return RSAKey.Builder(publicKey)
+            .privateKey(privateKey)
+            .keyID(properties.keyId?.takeIf { it.isNotBlank() } ?: stableKeyId(publicKey))
+            .build()
+    }
+
+    private fun ephemeralRsaKey(properties: IdpProperties.Jwk): RSAKey {
+        if (!properties.allowEphemeral) {
+            throw IllegalStateException(
+                "Configure tolo-idp.jwk.private-key-pem or tolo-idp.jwk.private-key-location, " +
+                    "or explicitly set tolo-idp.jwk.allow-ephemeral=true for dev/test.",
+            )
+        }
         val keyPairGenerator = KeyPairGenerator.getInstance("RSA")
         keyPairGenerator.initialize(2048)
         val keyPair = keyPairGenerator.generateKeyPair()
-        val rsaKey = RSAKey.Builder(keyPair.public as RSAPublicKey)
+        return RSAKey.Builder(keyPair.public as RSAPublicKey)
             .privateKey(keyPair.private as RSAPrivateKey)
-            .keyID(UUID.randomUUID().toString())
+            .keyID(properties.keyId?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString())
             .build()
-        return ImmutableJWKSet(JWKSet(rsaKey))
+    }
+
+    private fun parsePkcs8RsaPrivateKey(pem: String): RSAPrivateKey {
+        val base64 = pem
+            .replace("-----BEGIN PRIVATE KEY-----", "")
+            .replace("-----END PRIVATE KEY-----", "")
+            .lines()
+            .joinToString("") { it.trim() }
+        val keySpec = PKCS8EncodedKeySpec(Base64.getDecoder().decode(base64))
+        return KeyFactory.getInstance("RSA").generatePrivate(keySpec) as RSAPrivateKey
+    }
+
+    private fun derivePublicKey(privateKey: RSAPrivateKey): RSAPublicKey {
+        val crtKey = privateKey as? RSAPrivateCrtKey
+            ?: throw IllegalArgumentException("RSA private key must include CRT parameters to derive a public key")
+        val keySpec = RSAPublicKeySpec(crtKey.modulus, crtKey.publicExponent)
+        return KeyFactory.getInstance("RSA").generatePublic(keySpec) as RSAPublicKey
+    }
+
+    private fun stableKeyId(publicKey: RSAPublicKey): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(publicKey.encoded)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
     }
 
     @Bean

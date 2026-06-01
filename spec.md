@@ -932,7 +932,7 @@ token_revoked
 - scope を暗黙に縮小して発行する
 - 複数 audience の access token を発行する
 - Opaque Token を使う
-- Introspection を使う
+- Opaque Token Introspection に依存する
 - access token 本体をログに出す
 - relation service の詳細な失敗理由を外部レスポンスに出す
 - relation service の失敗レスポンスを cache hit として扱う

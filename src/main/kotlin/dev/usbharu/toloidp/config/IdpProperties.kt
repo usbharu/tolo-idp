@@ -1,6 +1,7 @@
 package dev.usbharu.toloidp.config
 
 import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.core.io.Resource as SpringResource
 import java.time.Duration
 
 @ConfigurationProperties(prefix = "tolo-idp")
@@ -10,6 +11,7 @@ data class IdpProperties(
     val relation: Relation = Relation(),
     val token: Token = Token(),
     val seed: Seed = Seed(),
+    val jwk: Jwk = Jwk(),
 ) {
     data class Resource(
         val allowedHosts: Set<String> = setOf("api.example.com"),
@@ -33,8 +35,15 @@ data class IdpProperties(
     )
 
     data class Seed(
-        val enabled: Boolean = true,
+        val enabled: Boolean = false,
         val clientSecret: String = "secret",
         val userPassword: String = "password",
+    )
+
+    data class Jwk(
+        val privateKeyPem: String? = null,
+        val privateKeyLocation: SpringResource? = null,
+        val keyId: String? = null,
+        val allowEphemeral: Boolean = false,
     )
 }
