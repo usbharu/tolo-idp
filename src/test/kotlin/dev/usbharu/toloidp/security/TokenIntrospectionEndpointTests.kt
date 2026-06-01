@@ -1,0 +1,257 @@
+package dev.usbharu.toloidp.security
+
+import org.hamcrest.Matchers.containsString
+import org.hamcrest.Matchers.not
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
+import org.springframework.http.MediaType
+import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.oauth2.core.AuthorizationGrantType
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod
+import org.springframework.security.oauth2.core.OAuth2AccessToken
+import org.springframework.security.oauth2.server.authorization.OAuth2Authorization
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
+import org.springframework.security.oauth2.server.authorization.settings.ClientSettings
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
+import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import java.time.Instant
+import java.util.UUID
+
+@SpringBootTest
+@AutoConfigureMockMvc
+class TokenIntrospectionEndpointTests(
+    @Autowired private val mockMvc: MockMvc,
+    @Autowired private val authorizationService: OAuth2AuthorizationService,
+    @Autowired private val registeredClientRepository: RegisteredClientRepository,
+    @Autowired private val passwordEncoder: PasswordEncoder,
+    @Autowired private val jdbcClient: JdbcClient,
+) {
+    @BeforeEach
+    fun setUp() {
+        jdbcClient.sql("delete from oauth2_authorization").update()
+        ensurePublicPolicyClient()
+    }
+
+    @Test
+    fun confidentialClientCanIntrospectActiveTenantAccessToken() {
+        val tokenValue = "tenant-token-${UUID.randomUUID()}"
+        saveAuthorization(
+            tokenValue = tokenValue,
+            claims = tokenClaims(
+                tokenUse = TOKEN_USE_TENANT_ACCESS,
+                resource = "https://api.example.com/tenants/tenant-1",
+                tenantId = "tenant-1",
+            ),
+        )
+
+        mockMvc.perform(introspectionRequest("client-123", "secret", tokenValue))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.active").value(true))
+            .andExpect(jsonPath("$.client_id").value("client-123"))
+            .andExpect(jsonPath("$.scope").value("tenant.read events.read"))
+            .andExpect(jsonPath("$.aud[0]").value("backend-api"))
+            .andExpect(jsonPath("$.iss").value("http://localhost:8080"))
+            .andExpect(jsonPath("$.sub").value("user-123"))
+            .andExpect(jsonPath("$.jti").value("jti-tenant_access"))
+            .andExpect(jsonPath("$.token_use").value(TOKEN_USE_TENANT_ACCESS))
+            .andExpect(jsonPath("$.resource").value("https://api.example.com/tenants/tenant-1"))
+            .andExpect(jsonPath("$.tenant_id").value("tenant-1"))
+            .andExpect(content().string(not(containsString(tokenValue))))
+    }
+
+    @Test
+    fun confidentialClientCanIntrospectActiveEventAccessToken() {
+        val tokenValue = "event-token-${UUID.randomUUID()}"
+        saveAuthorization(
+            tokenValue = tokenValue,
+            claims = tokenClaims(
+                tokenUse = TOKEN_USE_EVENT_ACCESS,
+                resource = "https://api.example.com/tenants/tenant-1/events/event-1",
+                tenantId = "tenant-1",
+                eventId = "event-1",
+            ),
+        )
+
+        mockMvc.perform(introspectionRequest("client-123", "secret", tokenValue))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.active").value(true))
+            .andExpect(jsonPath("$.client_id").value("client-123"))
+            .andExpect(jsonPath("$.token_use").value(TOKEN_USE_EVENT_ACCESS))
+            .andExpect(jsonPath("$.tenant_id").value("tenant-1"))
+            .andExpect(jsonPath("$.event_id").value("event-1"))
+            .andExpect(content().string(not(containsString(tokenValue))))
+    }
+
+    @Test
+    fun missingExpiredAndRevokedTokensReturnInactive() {
+        val expiredToken = "expired-token-${UUID.randomUUID()}"
+        val revokedToken = "revoked-token-${UUID.randomUUID()}"
+
+        saveAuthorization(tokenValue = expiredToken, expiresAt = Instant.now().minusSeconds(60))
+        saveAuthorization(tokenValue = revokedToken, invalidated = true)
+
+        mockMvc.perform(introspectionRequest("client-123", "secret", "missing-token"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.active").value(false))
+
+        mockMvc.perform(introspectionRequest("client-123", "secret", expiredToken))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.active").value(false))
+
+        mockMvc.perform(introspectionRequest("client-123", "secret", revokedToken))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.active").value(false))
+    }
+
+    @Test
+    fun publicPolicyClientCanIntrospectTokens() {
+        val tokenValue = "public-accepted-token-${UUID.randomUUID()}"
+        saveAuthorization(tokenValue = tokenValue)
+
+        mockMvc.perform(introspectionRequest(PUBLIC_POLICY_CLIENT_ID, PUBLIC_POLICY_CLIENT_SECRET, tokenValue))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.active").value(true))
+            .andExpect(jsonPath("$.client_id").value("client-123"))
+            .andExpect(content().string(not(containsString(tokenValue))))
+    }
+
+    @Test
+    fun invalidTokenParametersAreRejected() {
+        mockMvc.perform(
+            post("/oauth2/introspect")
+                .with(httpBasic("client-123", "secret"))
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+
+        mockMvc.perform(
+            post("/oauth2/introspect")
+                .with(httpBasic("client-123", "secret"))
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("token", ""),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+
+        mockMvc.perform(
+            post("/oauth2/introspect")
+                .with(httpBasic("client-123", "secret"))
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("token", "one", "two"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+    }
+
+    private fun introspectionRequest(clientId: String, clientSecret: String, tokenValue: String) =
+        post("/oauth2/introspect")
+            .with(httpBasic(clientId, clientSecret))
+            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .param("token", tokenValue)
+
+    private fun saveAuthorization(
+        tokenValue: String,
+        claims: Map<String, Any> = tokenClaims(),
+        expiresAt: Instant = Instant.now().plusSeconds(3600),
+        invalidated: Boolean = false,
+    ) {
+        val registeredClient = registeredClientRepository.findByClientId("client-123")
+            ?: error("seed client-123 is required")
+        val issuedAt = expiresAt.minusSeconds(3600)
+        val accessToken = OAuth2AccessToken(
+            OAuth2AccessToken.TokenType.BEARER,
+            tokenValue,
+            issuedAt,
+            expiresAt,
+            setOf("tenant.read", "events.read"),
+        )
+        val authorization = OAuth2Authorization.withRegisteredClient(registeredClient)
+            .principalName("user-123")
+            .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+            .authorizedScopes(setOf("tenant.read", "events.read"))
+            .token(accessToken) { metadata ->
+                metadata[OAuth2Authorization.Token.CLAIMS_METADATA_NAME] = claims
+                if (invalidated) {
+                    metadata[OAuth2Authorization.Token.INVALIDATED_METADATA_NAME] = true
+                }
+            }
+            .build()
+        authorizationService.save(authorization)
+    }
+
+    private fun tokenClaims(
+        tokenUse: String = TOKEN_USE_TENANT_ACCESS,
+        resource: String = "https://api.example.com/tenants/tenant-1",
+        tenantId: String = "tenant-1",
+        eventId: String? = null,
+    ): Map<String, Any> {
+        val claims = linkedMapOf<String, Any>(
+            "iss" to "http://localhost:8080",
+            "sub" to "user-123",
+            "aud" to listOf("backend-api"),
+            "client_id" to "client-123",
+            "scope" to listOf("tenant.read", "events.read"),
+            "token_use" to tokenUse,
+            "resource" to resource,
+            "iat" to Instant.parse("2026-01-01T00:00:00Z"),
+            "nbf" to Instant.parse("2026-01-01T00:00:00Z"),
+            "exp" to Instant.parse("2030-01-01T00:00:00Z"),
+            "jti" to "jti-$tokenUse",
+            "tenant_id" to tenantId,
+        )
+        if (eventId != null) {
+            claims["event_id"] = eventId
+        }
+        return claims
+    }
+
+    private fun ensurePublicPolicyClient() {
+        if (registeredClientRepository.findByClientId(PUBLIC_POLICY_CLIENT_ID) == null) {
+            registeredClientRepository.save(
+                RegisteredClient.withId(UUID.randomUUID().toString())
+                    .clientId(PUBLIC_POLICY_CLIENT_ID)
+                    .clientSecret(passwordEncoder.encode(PUBLIC_POLICY_CLIENT_SECRET))
+                    .clientName("Public policy test client")
+                    .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                    .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                    .redirectUri("http://127.0.0.1:8080/login/oauth2/code/public-policy")
+                    .scope("tenant.read")
+                    .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
+                    .build(),
+            )
+        }
+
+        jdbcClient.sql("delete from idp_client_policy where client_id = :clientId")
+            .param("clientId", PUBLIC_POLICY_CLIENT_ID)
+            .update()
+        jdbcClient.sql(
+            """
+            insert into idp_client_policy(
+                client_id, client_type, allowed_grant_types, allowed_token_exchange_transitions,
+                allowed_audiences, allowed_scopes, tenant_access_ttl_seconds, event_access_ttl_seconds
+            ) values (
+                :clientId, 'PUBLIC', 'authorization_code', '',
+                'backend-api', 'tenant.read', 900, 600
+            )
+            """.trimIndent(),
+        )
+            .param("clientId", PUBLIC_POLICY_CLIENT_ID)
+            .update()
+    }
+
+    private companion object {
+        const val PUBLIC_POLICY_CLIENT_ID = "public-introspection-client"
+        const val PUBLIC_POLICY_CLIENT_SECRET = "public-secret"
+    }
+}

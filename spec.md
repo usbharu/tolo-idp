@@ -543,8 +543,48 @@ Access Token はすべて JWT とする。
 
 ```text
 - Opaque Token は使用しない
-- Introspection は使用しない
-- Resource Server が JWT を自己検証する
+- Resource Server は JWT を自己検証できる
+- 認証済み client 向けに Token Introspection を提供する
+```
+
+Token Introspection は RFC 7662 の `POST /oauth2/introspect` とする。
+
+Introspection Request は登録済み client の認証を必須とする。confidential client と public client のどちらも Introspection を利用できる。
+
+存在しない token、失効済み token、期限切れ token、nbf より前の token は以下のように返す。
+
+```json
+{
+  "active": false
+}
+```
+
+active token の場合、Authorization Server は保存済み JWT claim を元に、少なくとも以下を返す。
+
+```text
+active
+client_id
+scope
+aud
+iss
+sub
+exp
+iat
+nbf
+jti
+token_use
+resource
+tenant_id または event_id
+```
+
+Introspection Response とログに以下を含めてはならない。
+
+```text
+access token 本体
+refresh token 本体
+client secret
+authorization code
+password
 ```
 
 ### 13.2 共通必須 claim
