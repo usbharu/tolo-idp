@@ -57,23 +57,7 @@ Authorization Server は REST API を用いてユーザー認証を行う。
 
 ## 4. ログイン API
 
-### 4.1 CSRF token 取得
-
-```http
-GET /api/csrf
-```
-
-レスポンス:
-
-```json
-{
-  "headerName": "X-XSRF-TOKEN",
-  "parameterName": "_csrf",
-  "token": "{csrf_token}"
-}
-```
-
-### 4.2 ログイン
+### 4.1 ログイン
 
 ```http
 POST /api/login
@@ -86,7 +70,7 @@ Content-Type: application/json
 }
 ```
 
-`/api/login` は未認証で呼び出せる。現行実装ではこの endpoint の CSRF 検証は無効化する。
+`/api/login` は未認証で呼び出せる。現行実装ではアプリケーション API の CSRF 検証は無効化する。
 
 Authorization Server は以下を確認する。
 
@@ -111,13 +95,13 @@ Authorization Server は以下を確認する。
 
 認証失敗は `401 Unauthorized`、tenant 不許可は `403 Forbidden` とする。
 
-### 4.3 ログアウト
+### 4.2 ログアウト
 
 ```http
 POST /api/logout
 ```
 
-認証済みセッションから呼び出す。現行実装では通常の CSRF 検証対象とする。
+認証済みセッションから呼び出す。
 
 セッションを破棄し、`204 No Content` を返す。
 

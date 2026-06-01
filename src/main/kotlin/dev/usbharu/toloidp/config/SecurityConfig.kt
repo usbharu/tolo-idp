@@ -50,7 +50,6 @@ import org.springframework.security.provisioning.JdbcUserDetailsManager
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository
 import javax.sql.DataSource
 import java.security.KeyPairGenerator
 import java.security.interfaces.RSAPrivateKey
@@ -166,7 +165,7 @@ class SecurityConfig {
     @Order(2)
     fun applicationSecurityFilterChain(http: HttpSecurity): SecurityFilterChain {
         http.authorizeHttpRequests {
-            it.requestMatchers("/actuator/health", "/api/login", "/api/csrf").permitAll()
+            it.requestMatchers("/actuator/health", "/api/login").permitAll()
                 .anyRequest().authenticated()
         }
             .exceptionHandling {
@@ -174,10 +173,7 @@ class SecurityConfig {
             }
             .formLogin { it.disable() }
             .logout { it.disable() }
-            .csrf {
-                it.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                    .ignoringRequestMatchers("/api/login")
-            }
+            .csrf { it.disable() }
         return http.build()
     }
 

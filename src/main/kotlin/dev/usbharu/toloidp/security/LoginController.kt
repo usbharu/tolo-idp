@@ -15,8 +15,6 @@ import org.springframework.security.core.context.SecurityContextImpl
 import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository
-import org.springframework.security.web.csrf.CsrfToken
-import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -31,14 +29,6 @@ class LoginController(
     private val relationService: RelationService,
     private val resourceParser: ResourceParser,
 ) {
-    @GetMapping("/csrf")
-    fun csrf(csrfToken: CsrfToken): CsrfResponse =
-        CsrfResponse(
-            headerName = csrfToken.headerName,
-            parameterName = csrfToken.parameterName,
-            token = csrfToken.token,
-        )
-
     @PostMapping("/login")
     fun login(
         @RequestBody request: LoginRequest,
@@ -101,10 +91,4 @@ data class LoginResponse(
     val tenantId: String,
     val resource: String,
     val authorities: List<String>,
-)
-
-data class CsrfResponse(
-    val headerName: String,
-    val parameterName: String,
-    val token: String,
 )
