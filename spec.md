@@ -18,6 +18,7 @@
 - tenant_access → event_access の Token Exchange
 - event_access token の claim
 - client 認可
+- relation service 参照
 - audience 検証
 - resource 検証
 - scope 検証
@@ -202,13 +203,17 @@ Authorization Server は Token Exchange Request に対して以下を検証す�
 
 ### 8.1 role
 
-暫定 role:
+Authorization Server が scope 発行可否の判定に使う暫定 role:
 
 ```text
 owner
 admin
 staff
 ```
+
+`owner` / `staff` は relation service から取得する外部 role である。
+
+`admin` は IdP 内部設定または将来の本番 relation service で扱う可能性がある role であり、現時点の `tolo-relation-stub` からは返却されない。
 
 ### 8.2 scope
 
@@ -237,44 +242,133 @@ role は Authorization Server が scope 発行可否を判定するための内�
 
 role は JWT claim には含めない。
 
+relation service から取得した role は、JWT claim へ転記せず、scope 発行判定の入力としてのみ使う。
+
 ---
 
-## 9. scope 発行ルール
+## 9. relation service 参照仕様
+
+Authorization Server は tenant / event の所属関係、および subject user の role を relation service から取得する。
+
+現時点では `tolo-relation-stub` を暫定 relation service 契約として扱う。
+
+### 9.1 参照 API
+
+Authorization Server は、resource から得た `tenantId` と subject token の `sub` を用いて、以下の API を参照する。
+
+```http
+GET /tenants/{tenantId}/users/{userId}
+```
+
+`userId` には JWT の `sub` をそのまま使う。
+
+### 9.2 response
+
+relation service は以下の JSON を返す。
+
+```json
+{
+  "tenant": { "id": "tenant-a", "role": "owner" },
+  "user": { "id": "user-123" },
+  "events": [
+    { "id": "event-1", "role": "staff" }
+  ]
+}
+```
+
+`tenant.role` は、user が対象 tenant に role を持たない場合 `null` である。
+
+`events` は、対象 tenant 配下の event のうち、user が role を持つもののみを含む。該当 event がない場合は空配列である。
+
+relation service が返す外部 role は以下のみとする。
+
+```text
+owner
+staff
+```
+
+### 9.3 relation model 制約
+
+relation service のモデル制約は以下とする。
+
+```text
+- 1 user は最大 1 tenant に所属する
+- event は必ず 1 tenant に属する
+- event role を持つ user は、その event の所属 tenant に tenant role を持つ
+- tenant role と event role は独立している
+```
+
+例: tenant role が `staff` で event role が `owner` の user は成立する。
+
+### 9.4 relation lookup の扱い
+
+Authorization Server は relation service の結果を以下のように扱う。
+
+```text
+- tenant.role == null の場合、subject user は対象 tenant の member ではない
+- resource の eventId が events[].id に存在しない場合、subject user は対象 event にアクセスできない
+- event_access token の scope 判定には、該当 events[].role を使う
+- tenant_access token の scope 判定には、tenant.role を使う
+```
+
+relation service が `404` を返した場合、対象 tenant は token 発行対象として扱わない。
+
+relation service への通信失敗、timeout、不正 response、未知 role は、token 発行不可として扱う。
+
+### 9.5 IdP 側の入口制約
+
+`tolo-relation-stub` は ID 値を単純な文字列として扱うが、Authorization Server は本仕様の ID 形式制限を入口で必ず適用する。
+
+Authorization Server は、ID 形式検証に失敗した値を relation service へ問い合わせてはならない。
+
+---
+
+## 10. scope 発行ルール
 
 Authorization Server は、要求された `scope` を暗黙に縮小して発行してはならない。
 
 要求 scope に許可外 scope が含まれる場合、Authorization Server は `invalid_scope` を返す。
 
-### 9.1 tenant_access token 発行時
+### 10.1 tenant_access token 発行時
 
 `tenant_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
 
 ```text
 requested_scope ⊆ client.allowed_scopes
-requested_scope ⊆ role.allowed_scopes
+requested_scope ⊆ tenant_role.allowed_scopes
 ```
 
-### 9.2 event_access token 発行時
+`tenant_role` は relation service の `tenant.role` から取得する。`tenant.role == null` の場合、tenant_access token は発行しない。
+
+`admin` を使う場合は、IdP 内部設定または将来の本番 relation service の role mapping により `tenant_role` へ割り当てる。`tolo-relation-stub` の response から `admin` を推定してはならない。
+
+### 10.2 event_access token 発行時
 
 `event_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
 
 ```text
 requested_scope ⊆ client.allowed_scopes
 requested_scope ⊆ subject_token.scope
-requested_scope ⊆ role.allowed_scopes
+requested_scope ⊆ event_role.allowed_scopes
 ```
+
+`event_role` は relation service の `events[].role` から取得する。
+
+resource の `eventId` に一致する event が `events` に存在しない場合、event_access token は発行しない。
+
+`admin` を使う場合は、IdP 内部設定または将来の本番 relation service の role mapping により `event_role` へ割り当てる。`tolo-relation-stub` の response から `admin` を推定してはならない。
 
 ---
 
-## 10. resource 仕様
+## 11. resource 仕様
 
-### 10.1 採用方針
+### 11.1 採用方針
 
 Token Exchange Request では、対象 event の指定に `resource` パラメータを使用する。
 
 `x_tenant_id` / `x_event_id` は使用しない。
 
-### 10.2 tenant resource
+### 11.2 tenant resource
 
 `tenant_access` token の resource は以下の形式とする。
 
@@ -282,7 +376,7 @@ Token Exchange Request では、対象 event の指定に `resource` パラメ�
 https://api.example.com/tenants/{tenantId}
 ```
 
-### 10.3 event resource
+### 11.3 event resource
 
 `event_access` token を要求する場合、Token Exchange Request の `resource` は以下の形式とする。
 
@@ -290,7 +384,7 @@ https://api.example.com/tenants/{tenantId}
 https://api.example.com/tenants/{tenantId}/events/{eventId}
 ```
 
-### 10.4 resource 検証
+### 11.4 resource 検証
 
 Authorization Server は `resource` について以下を検証する。
 
@@ -300,12 +394,12 @@ Authorization Server は `resource` について以下を検証する。
 - host が許可済みである
 - path が許可パターンに一致する
 - tenantId / eventId が ID 形式に一致する
-- tenant が存在し有効である
-- event が tenant に属している
-- subject user が対象 event にアクセス可能である
+- relation service 上で tenant が token 発行対象として扱える
+- relation service 上で event が tenant に属している
+- relation service 上で subject user が対象 event にアクセス可能である
 ```
 
-### 10.5 ID 形式
+### 11.5 ID 形式
 
 tenantId / eventId は以下の形式に限定する。
 
@@ -323,9 +417,9 @@ tenantId / eventId は以下の形式に限定する。
 
 ---
 
-## 11. JWT 仕様
+## 12. JWT 仕様
 
-### 11.1 token 形式
+### 12.1 token 形式
 
 Access Token はすべて JWT とする。
 
@@ -335,7 +429,7 @@ Access Token はすべて JWT とする。
 - Resource Server が JWT を自己検証する
 ```
 
-### 11.2 共通必須 claim
+### 12.2 共通必須 claim
 
 ```text
 iss
@@ -351,20 +445,20 @@ exp
 jti
 ```
 
-### 11.3 tenant_access token 必須 claim
+### 12.3 tenant_access token 必須 claim
 
 ```text
 tenant_id
 ```
 
-### 11.4 event_access token 必須 claim
+### 12.4 event_access token 必須 claim
 
 ```text
 tenant_id
 event_id
 ```
 
-### 11.5 JWT に含めない claim
+### 12.5 JWT に含めない claim
 
 以下の claim は JWT に含めない。
 
@@ -376,9 +470,9 @@ event_role
 
 ---
 
-## 12. Token Exchange Request
+## 13. Token Exchange Request
 
-### 12.1 event_access token 発行
+### 13.1 event_access token 発行
 
 ```http
 POST /oauth2/token
@@ -404,15 +498,16 @@ Authorization Server は以下を確認する。
 - requested audience が client に許可されている
 - requested resource が event resource 形式である
 - subject_token.tenant_id == resource の tenantId
-- event が対象 tenant に属している
-- subject user が event に現在アクセス可能である
+- relation service に subject_token.sub と resource の tenantId を問い合わせる
+- relation service の tenant.role が null ではない
+- resource の eventId が relation service の events[].id に存在する
 - requested_scope が subject_token.scope を超えていない
-- requested_scope が client / role に許可されている
+- requested_scope が client / event_role に許可されている
 ```
 
 ---
 
-## 13. event status の扱い
+## 14. event status の扱い
 
 event status に基づく細かい業務判断は Authorization Server の責務ではない。
 
@@ -421,9 +516,9 @@ Authorization Server は、event_access token 発行時に、対象 event が to
 Authorization Server が行ってよい確認:
 
 ```text
-- event が存在する
-- event が tenant に属している
-- user が event にアクセス可能である
+- relation service 上で event が存在する
+- relation service 上で event が tenant に属している
+- relation service 上で user が event にアクセス可能である
 - event が token 発行自体に不適切な状態ではない
 ```
 
@@ -439,7 +534,7 @@ Resource Server 側で扱うべき判断:
 
 ---
 
-## 14. role / permission 変更時の方針
+## 15. role / permission 変更時の方針
 
 JWT 内の `scope` は発行時点の認可スナップショットである。
 
@@ -447,11 +542,11 @@ Resource Server の主判定は `scope` とする。
 
 role は主に Authorization Server が scope 発行時に使う内部情報である。
 
-### 14.1 write 系 API
+### 15.1 write 系 API
 
 `tenant.write` または `events.write` を必要とする API では、Resource Server は DB 上の現在の membership / permission を確認し、token 内の scope が現在も許可可能であることを確認する。
 
-### 14.2 read 系 API
+### 15.2 read 系 API
 
 read 系 API は短命 token を基本とする。
 
@@ -459,7 +554,7 @@ read 系 API は短命 token を基本とする。
 
 ---
 
-## 15. 失効方針
+## 16. 失効方針
 
 JWT のみを使用するため、失効は以下の方針とする。
 
@@ -470,7 +565,7 @@ JWT のみを使用するため、失効は以下の方針とする。
 - denylist の TTL は token の exp までとする
 ```
 
-### 15.1 token TTL
+### 16.1 token TTL
 
 暫定 TTL:
 
@@ -481,11 +576,11 @@ JWT のみを使用するため、失効は以下の方針とする。
 
 ---
 
-## 16. エラー方針
+## 17. エラー方針
 
 外部レスポンスでは、tenant / event / membership の詳細を漏らさない。
 
-### 16.1 Token Exchange が許可されない場合
+### 17.1 Token Exchange が許可されない場合
 
 ```json
 {
@@ -497,14 +592,21 @@ JWT のみを使用するため、失効は以下の方針とする。
 以下は外部上は同じエラーにまとめる。
 
 ```text
+tenant_not_found
 event_not_found
 event_not_in_tenant
+user_not_tenant_member
 user_not_event_member
+relation_lookup_failed
+relation_response_invalid
+relation_role_unknown
 invalid_token_use_transition
 token_revoked
 ```
 
-### 16.2 scope が許可されない場合
+relation service の `404 tenant not found`、通信失敗、timeout、不正 response、未知 role、membership 不足は、外部レスポンスで詳細を区別しない。
+
+### 17.2 scope が許可されない場合
 
 ```json
 {
@@ -513,7 +615,7 @@ token_revoked
 }
 ```
 
-### 16.3 audience / resource が許可されない場合
+### 17.3 audience / resource が許可されない場合
 
 ```json
 {
@@ -522,7 +624,7 @@ token_revoked
 }
 ```
 
-### 16.4 リクエスト形式が不正な場合
+### 17.4 リクエスト形式が不正な場合
 
 ```json
 {
@@ -533,11 +635,11 @@ token_revoked
 
 ---
 
-## 17. 監査ログ仕様
+## 18. 監査ログ仕様
 
 Token Exchange は認可境界であるため、成功・失敗の両方を必ず監査ログに記録する。
 
-### 17.1 記録項目
+### 18.1 記録項目
 
 ```text
 timestamp
@@ -560,7 +662,7 @@ user_agent
 issued_jti
 ```
 
-### 17.2 ログに出してはいけないもの
+### 18.2 ログに出してはいけないもの
 
 ```text
 access token 本体
@@ -570,14 +672,14 @@ authorization code
 password
 ```
 
-### 17.3 result
+### 18.3 result
 
 ```text
 success
 failure
 ```
 
-### 17.4 failure_reason 例
+### 18.4 failure_reason 例
 
 ```text
 invalid_token_use_transition
@@ -590,13 +692,16 @@ event_not_found
 event_not_in_tenant
 user_not_tenant_member
 user_not_event_member
+relation_lookup_failed
+relation_response_invalid
+relation_role_unknown
 scope_not_allowed_for_client
 scope_not_allowed_for_role
 scope_exceeds_subject_token
 token_revoked
 ```
 
-### 17.5 成功ログ例
+### 18.5 成功ログ例
 
 ```json
 {
@@ -621,7 +726,7 @@ token_revoked
 }
 ```
 
-### 17.6 失敗ログ例
+### 18.6 失敗ログ例
 
 ```json
 {
@@ -648,7 +753,7 @@ token_revoked
 
 ---
 
-## 18. 禁止事項
+## 19. 禁止事項
 
 以下は禁止する。
 
@@ -666,11 +771,12 @@ token_revoked
 - Opaque Token を使う
 - Introspection を使う
 - access token 本体をログに出す
+- relation service の詳細な失敗理由を外部レスポンスに出す
 ```
 
 ---
 
-## 19. 未確定事項
+## 20. 未確定事項
 
 以下は未確定とし、後続設計で決める。
 
@@ -683,11 +789,12 @@ token_revoked
 - ユーザー認証後の tenant 選択フロー
 - Resource Server ごとの permission 再確認ポリシー
 - jti denylist を常時使うか、強制失効時のみ使うか
+- 本番 relation service で `admin` role を扱うか
 ```
 
 ---
 
-## 20. 最終設計まとめ
+## 21. 最終設計まとめ
 
 ```text
 scope:
@@ -704,6 +811,11 @@ event_id claim:
 
 role:
   Authorization Server が scope 発行時に使う内部情報
+  relation service から取得する role は JWT claim に入れない
+
+relation service:
+  tenant / event の所属関係と subject user の role を返す
+  現時点の暫定契約は tolo-relation-stub に合わせる
 
 Authorization Server:
   tenant_access token を発行する
