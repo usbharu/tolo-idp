@@ -10,6 +10,7 @@ import dev.usbharu.toloidp.client.ClientPolicyRepository
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.ScopePolicy
+import dev.usbharu.toloidp.security.JtiDenylistRepository
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
 import dev.usbharu.toloidp.security.TenantAuthorizationValidator
 import dev.usbharu.toloidp.security.TenantAwareAuthorizationRequestConverter
@@ -20,12 +21,10 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
 import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration
 import org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization.OAuth2AuthorizationServerConfigurer
 import org.springframework.security.core.userdetails.User
-import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.core.AuthorizationGrantType
@@ -49,10 +48,12 @@ import org.springframework.security.oauth2.server.authorization.token.JwtGenerat
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
 import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2AuthorizationCodeRequestAuthenticationConverter
 import org.springframework.security.provisioning.JdbcUserDetailsManager
+import org.springframework.security.provisioning.UserDetailsManager
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken
 import javax.sql.DataSource
+import java.time.Clock
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
@@ -129,8 +130,9 @@ class SecurityConfig {
         resourceParser: ResourceParser,
         relationService: RelationService,
         scopePolicy: ScopePolicy,
-        jdbcClient: JdbcClient,
+        jtiDenylistRepository: JtiDenylistRepository,
         auditService: AuditService,
+        clock: Clock,
         settings: AuthorizationServerSettings,
     ): SecurityFilterChain {
         val authorizationServerConfigurer = OAuth2AuthorizationServerConfigurer()
@@ -192,8 +194,9 @@ class SecurityConfig {
                             resourceParser,
                             relationService,
                             scopePolicy,
-                            jdbcClient,
+                            jtiDenylistRepository,
                             auditService,
+                            clock,
                         ),
                     )
                 }
@@ -248,7 +251,7 @@ class SecurityConfig {
         AuthorizationServerSettings.builder().issuer(properties.issuer).build()
 
     @Bean
-    fun userDetailsService(dataSource: DataSource): UserDetailsService =
+    fun userDetailsService(dataSource: DataSource): UserDetailsManager =
         JdbcUserDetailsManager(dataSource)
 
     @Bean

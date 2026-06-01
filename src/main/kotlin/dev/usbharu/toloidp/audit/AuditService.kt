@@ -1,7 +1,9 @@
 package dev.usbharu.toloidp.audit
 
 import org.slf4j.LoggerFactory
-import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.data.annotation.Id
+import org.springframework.data.relational.core.mapping.Table
+import org.springframework.data.repository.CrudRepository
 import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
 import java.time.Clock
@@ -9,7 +11,7 @@ import java.time.Instant
 
 @Service
 class AuditService(
-    private val jdbcClient: JdbcClient,
+    private val repository: AuditLogRepository,
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
 ) {
@@ -19,40 +21,56 @@ class AuditService(
         val timestamp = Instant.now(clock)
         val payload = objectMapper.writeValueAsString(event.copy(timestamp = timestamp.toString()))
         logger.info(payload)
-        jdbcClient.sql(
-            """
-            insert into idp_audit_log(
-                timestamp, request_id, client_id, subject, source_token_use, requested_token_use,
-                requested_audience, requested_resource, requested_scope, issued_scope,
-                tenant_id, event_id, result, failure_reason, source_ip, user_agent, issued_jti, payload
-            ) values (
-                :timestamp, :requestId, :clientId, :subject, :sourceTokenUse, :requestedTokenUse,
-                :requestedAudience, :requestedResource, :requestedScope, :issuedScope,
-                :tenantId, :eventId, :result, :failureReason, :sourceIp, :userAgent, :issuedJti, :payload
-            )
-            """.trimIndent(),
+        repository.save(
+            AuditLogRecord(
+                timestamp = timestamp,
+                requestId = event.requestId,
+                clientId = event.clientId,
+                subject = event.subject,
+                sourceTokenUse = event.sourceTokenUse,
+                requestedTokenUse = event.requestedTokenUse,
+                requestedAudience = event.requestedAudience,
+                requestedResource = event.requestedResource,
+                requestedScope = event.requestedScope.joinToString(" "),
+                issuedScope = event.issuedScope.joinToString(" "),
+                tenantId = event.tenantId,
+                eventId = event.eventId,
+                result = event.result,
+                failureReason = event.failureReason,
+                sourceIp = event.sourceIp,
+                userAgent = event.userAgent,
+                issuedJti = event.issuedJti,
+                payload = payload,
+            ),
         )
-            .param("timestamp", timestamp)
-            .param("requestId", event.requestId)
-            .param("clientId", event.clientId)
-            .param("subject", event.subject)
-            .param("sourceTokenUse", event.sourceTokenUse)
-            .param("requestedTokenUse", event.requestedTokenUse)
-            .param("requestedAudience", event.requestedAudience)
-            .param("requestedResource", event.requestedResource)
-            .param("requestedScope", event.requestedScope.joinToString(" "))
-            .param("issuedScope", event.issuedScope.joinToString(" "))
-            .param("tenantId", event.tenantId)
-            .param("eventId", event.eventId)
-            .param("result", event.result)
-            .param("failureReason", event.failureReason)
-            .param("sourceIp", event.sourceIp)
-            .param("userAgent", event.userAgent)
-            .param("issuedJti", event.issuedJti)
-            .param("payload", payload)
-            .update()
     }
 }
+
+@Table("IDP_AUDIT_LOG")
+data class AuditLogRecord(
+    @Id
+    val id: Long? = null,
+    val timestamp: Instant,
+    val requestId: String?,
+    val clientId: String?,
+    val subject: String?,
+    val sourceTokenUse: String?,
+    val requestedTokenUse: String?,
+    val requestedAudience: String?,
+    val requestedResource: String?,
+    val requestedScope: String,
+    val issuedScope: String,
+    val tenantId: String?,
+    val eventId: String?,
+    val result: String,
+    val failureReason: String?,
+    val sourceIp: String?,
+    val userAgent: String?,
+    val issuedJti: String?,
+    val payload: String,
+)
+
+interface AuditLogRepository : CrudRepository<AuditLogRecord, Long>
 
 data class TokenAuditEvent(
     val timestamp: String? = null,

@@ -1,5 +1,8 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.client.ClientPolicy
+import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.ClientType
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
 import org.junit.jupiter.api.BeforeEach
@@ -24,6 +27,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
@@ -34,6 +38,7 @@ class TokenIntrospectionEndpointTests(
     @Autowired private val authorizationService: OAuth2AuthorizationService,
     @Autowired private val registeredClientRepository: RegisteredClientRepository,
     @Autowired private val passwordEncoder: PasswordEncoder,
+    @Autowired private val clientPolicyRepository: ClientPolicyRepository,
     @Autowired private val jdbcClient: JdbcClient,
 ) {
     @BeforeEach
@@ -232,22 +237,18 @@ class TokenIntrospectionEndpointTests(
             )
         }
 
-        jdbcClient.sql("delete from idp_client_policy where client_id = :clientId")
-            .param("clientId", PUBLIC_POLICY_CLIENT_ID)
-            .update()
-        jdbcClient.sql(
-            """
-            insert into idp_client_policy(
-                client_id, client_type, allowed_grant_types, allowed_token_exchange_transitions,
-                allowed_audiences, allowed_scopes, tenant_access_ttl_seconds, event_access_ttl_seconds
-            ) values (
-                :clientId, 'PUBLIC', 'authorization_code', '',
-                'backend-api', 'tenant.read', 900, 600
-            )
-            """.trimIndent(),
+        clientPolicyRepository.save(
+            ClientPolicy(
+                clientId = PUBLIC_POLICY_CLIENT_ID,
+                clientType = ClientType.PUBLIC,
+                allowedGrantTypes = setOf(AuthorizationGrantType.AUTHORIZATION_CODE.value),
+                allowedTransitions = emptySet(),
+                allowedAudiences = setOf("backend-api"),
+                allowedScopes = setOf("tenant.read"),
+                tenantAccessTtl = Duration.ofSeconds(900),
+                eventAccessTtl = Duration.ofSeconds(600),
+            ),
         )
-            .param("clientId", PUBLIC_POLICY_CLIENT_ID)
-            .update()
     }
 
     private companion object {

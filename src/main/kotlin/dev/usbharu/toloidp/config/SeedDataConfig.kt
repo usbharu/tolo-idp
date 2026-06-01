@@ -1,9 +1,12 @@
 package dev.usbharu.toloidp.config
 
+import dev.usbharu.toloidp.client.ClientPolicy
+import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.ClientType
 import org.springframework.boot.ApplicationRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.security.core.userdetails.User
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
@@ -12,6 +15,7 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings
 import org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings
+import org.springframework.security.provisioning.UserDetailsManager
 import java.time.Duration
 import java.util.UUID
 
@@ -20,26 +24,22 @@ class SeedDataConfig {
     @Bean
     fun seedDataRunner(
         properties: IdpProperties,
-        jdbcClient: JdbcClient,
         passwordEncoder: PasswordEncoder,
+        userDetailsManager: UserDetailsManager,
         registeredClientRepository: RegisteredClientRepository,
+        clientPolicyRepository: ClientPolicyRepository,
     ): ApplicationRunner = ApplicationRunner {
         if (!properties.seed.enabled) {
             return@ApplicationRunner
         }
 
-        val userCount = jdbcClient.sql("select count(*) from users where username = 'user-123'")
-            .query(Int::class.java)
-            .single()
-        if (userCount == 0) {
-            jdbcClient.sql("insert into users(username, password, enabled) values (:username, :password, true)")
-                .param("username", "user-123")
-                .param("password", passwordEncoder.encode(properties.seed.userPassword))
-                .update()
-            jdbcClient.sql("insert into authorities(username, authority) values (:username, :authority)")
-                .param("username", "user-123")
-                .param("authority", "ROLE_USER")
-                .update()
+        if (!userDetailsManager.userExists("user-123")) {
+            userDetailsManager.createUser(
+                User.withUsername("user-123")
+                    .password(passwordEncoder.encode(properties.seed.userPassword))
+                    .roles("USER")
+                    .build(),
+            )
         }
 
         if (registeredClientRepository.findByClientId("client-123") == null) {
@@ -68,22 +68,22 @@ class SeedDataConfig {
             )
         }
 
-        val policyCount = jdbcClient.sql("select count(*) from idp_client_policy where client_id = 'client-123'")
-            .query(Int::class.java)
-            .single()
-        if (policyCount == 0) {
-            jdbcClient.sql(
-                """
-                insert into idp_client_policy(
-                    client_id, client_type, allowed_grant_types, allowed_token_exchange_transitions,
-                    allowed_audiences, allowed_scopes, tenant_access_ttl_seconds, event_access_ttl_seconds
-                ) values (
-                    'client-123', 'CONFIDENTIAL', 'authorization_code,urn:ietf:params:oauth:grant-type:token-exchange',
-                    'tenant_access:event_access', 'backend-api',
-                    'tenant.read,tenant.write,events.read,events.write', 900, 600
-                )
-                """.trimIndent(),
-            ).update()
+        if (clientPolicyRepository.findByClientId("client-123") == null) {
+            clientPolicyRepository.save(
+                ClientPolicy(
+                    clientId = "client-123",
+                    clientType = ClientType.CONFIDENTIAL,
+                    allowedGrantTypes = setOf(
+                        AuthorizationGrantType.AUTHORIZATION_CODE.value,
+                        AuthorizationGrantType.TOKEN_EXCHANGE.value,
+                    ),
+                    allowedTransitions = setOf("tenant_access:event_access"),
+                    allowedAudiences = setOf("backend-api"),
+                    allowedScopes = setOf("tenant.read", "tenant.write", "events.read", "events.write"),
+                    tenantAccessTtl = Duration.ofSeconds(900),
+                    eventAccessTtl = Duration.ofSeconds(600),
+                ),
+            )
         }
     }
 }

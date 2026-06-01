@@ -10,7 +10,6 @@ import kotlin.test.assertFailsWith
 import org.junit.jupiter.api.BeforeEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.jdbc.core.simple.JdbcClient
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -19,7 +18,6 @@ import java.time.ZoneOffset
 @SpringBootTest(properties = ["tolo-idp.seed.enabled=false"])
 class CachedRelationServiceTests(
     @Autowired private val cacheRepository: RelationMembershipCacheRepository,
-    @Autowired private val jdbcClient: JdbcClient,
     @Autowired private val resourceParser: ResourceParser,
 ) {
     private val now = Instant.parse("2026-06-01T00:00:00Z")
@@ -109,9 +107,7 @@ class CachedRelationServiceTests(
     }
 
     private fun cacheRowCount(): Int =
-        jdbcClient.sql("select count(*) from idp_relation_membership_cache")
-            .query(Int::class.java)
-            .single()
+        cacheRepository.count().toInt()
 
     private fun sampleMembership(tenantId: String, eventId: String = "event-1"): TenantMembership =
         TenantMembership(

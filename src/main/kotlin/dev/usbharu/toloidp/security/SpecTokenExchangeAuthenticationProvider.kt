@@ -9,7 +9,6 @@ import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.ScopeNotAllowedException
 import dev.usbharu.toloidp.scope.ScopePolicy
-import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.core.Authentication
 import org.springframework.security.oauth2.core.AuthorizationGrantType
@@ -29,8 +28,9 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import org.springframework.security.oauth2.server.authorization.context.AuthorizationServerContextHolder
 import org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat
 import org.springframework.security.oauth2.server.authorization.token.DefaultOAuth2TokenContext
-import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenContext
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
+import java.time.Clock
+import java.time.Instant
 
 class SpecTokenExchangeAuthenticationProvider(
     private val authorizationService: OAuth2AuthorizationService,
@@ -39,8 +39,9 @@ class SpecTokenExchangeAuthenticationProvider(
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
-    private val jdbcClient: JdbcClient,
+    private val jtiDenylistRepository: JtiDenylistRepository,
     private val auditService: AuditService,
+    private val clock: Clock,
 ) : AuthenticationProvider {
     override fun authenticate(authentication: Authentication): Authentication {
         val tokenExchange = authentication as OAuth2TokenExchangeAuthenticationToken
@@ -196,10 +197,7 @@ class SpecTokenExchangeAuthenticationProvider(
         if (jti == null) {
             return false
         }
-        return jdbcClient.sql("select count(*) from idp_jti_denylist where jti = :jti and expires_at > current_timestamp")
-            .param("jti", jti)
-            .query(Int::class.java)
-            .single() > 0
+        return jtiDenylistRepository.existsByJtiAndExpiresAtAfter(jti, Instant.now(clock))
     }
 
     private fun splitScope(value: Any?): Set<String> =

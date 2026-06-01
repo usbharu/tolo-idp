@@ -1,5 +1,9 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.audit.AuditLogRepository
+import dev.usbharu.toloidp.client.ClientPolicy
+import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.relation.EventMembership
 import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.TenantMembership
@@ -42,14 +46,17 @@ class TokenExchangeEndpointTests(
     @Autowired private val registeredClientRepository: RegisteredClientRepository,
     @Autowired private val passwordEncoder: PasswordEncoder,
     @Autowired private val cacheRepository: RelationMembershipCacheRepository,
+    @Autowired private val auditLogRepository: AuditLogRepository,
+    @Autowired private val jtiDenylistRepository: JtiDenylistRepository,
+    @Autowired private val clientPolicyRepository: ClientPolicyRepository,
     @Autowired private val jdbcClient: JdbcClient,
     @Autowired private val jwtDecoder: JwtDecoder,
 ) {
     @BeforeEach
     fun setUp() {
         jdbcClient.sql("delete from oauth2_authorization").update()
-        jdbcClient.sql("delete from idp_audit_log").update()
-        jdbcClient.sql("delete from idp_jti_denylist").update()
+        auditLogRepository.deleteAll()
+        jtiDenylistRepository.deleteAll()
         cacheRepository.deleteAll()
         ensurePublicPolicyClient()
         cacheRepository.put(
@@ -207,8 +214,10 @@ class TokenExchangeEndpointTests(
     @Test
     fun rejectsDeniedSubjectTokenAsInvalidGrant() {
         val subjectToken = saveTenantAuthorization(jti = "denied-jti")
-        jdbcClient.sql("insert into idp_jti_denylist(jti, expires_at) values ('denied-jti', '2030-01-01T00:00:00Z')")
-            .update()
+        jtiDenylistRepository.save(
+            JtiDenylistEntry("denied-jti", Instant.parse("2030-01-01T00:00:00Z"))
+                .apply { isNewEntity = true },
+        )
 
         mockMvc.perform(tokenExchangeRequest(subjectToken))
             .andExpect(status().isBadRequest)
@@ -313,34 +322,25 @@ class TokenExchangeEndpointTests(
     }
 
     private fun latestAudit(): Map<String, Any?> =
-        jdbcClient.sql(
-            """
-            select client_id, subject, source_token_use, requested_token_use, requested_audience,
-                   requested_resource, requested_scope, issued_scope, tenant_id, event_id,
-                   result, failure_reason, issued_jti
-            from idp_audit_log
-            order by id desc
-            limit 1
-            """.trimIndent(),
-        )
-            .query { rs, _ ->
+        auditLogRepository.findAll()
+            .maxBy { it.id ?: 0 }
+            .let {
                 mapOf(
-                    "client_id" to rs.getString("client_id"),
-                    "subject" to rs.getString("subject"),
-                    "source_token_use" to rs.getString("source_token_use"),
-                    "requested_token_use" to rs.getString("requested_token_use"),
-                    "requested_audience" to rs.getString("requested_audience"),
-                    "requested_resource" to rs.getString("requested_resource"),
-                    "requested_scope" to rs.getString("requested_scope"),
-                    "issued_scope" to rs.getString("issued_scope"),
-                    "tenant_id" to rs.getString("tenant_id"),
-                    "event_id" to rs.getString("event_id"),
-                    "result" to rs.getString("result"),
-                    "failure_reason" to rs.getString("failure_reason"),
-                    "issued_jti" to rs.getString("issued_jti"),
+                    "client_id" to it.clientId,
+                    "subject" to it.subject,
+                    "source_token_use" to it.sourceTokenUse,
+                    "requested_token_use" to it.requestedTokenUse,
+                    "requested_audience" to it.requestedAudience,
+                    "requested_resource" to it.requestedResource,
+                    "requested_scope" to it.requestedScope,
+                    "issued_scope" to it.issuedScope,
+                    "tenant_id" to it.tenantId,
+                    "event_id" to it.eventId,
+                    "result" to it.result,
+                    "failure_reason" to it.failureReason,
+                    "issued_jti" to it.issuedJti,
                 )
             }
-            .single()
 
     private fun ensurePublicPolicyClient() {
         if (registeredClientRepository.findByClientId(PUBLIC_POLICY_CLIENT_ID) == null) {
@@ -355,24 +355,18 @@ class TokenExchangeEndpointTests(
                     .build(),
             )
         }
-        jdbcClient.sql("delete from idp_client_policy where client_id = :clientId")
-            .param("clientId", PUBLIC_POLICY_CLIENT_ID)
-            .update()
-        jdbcClient.sql(
-            """
-            insert into idp_client_policy(
-                client_id, client_type, allowed_grant_types, allowed_token_exchange_transitions,
-                allowed_audiences, allowed_scopes, tenant_access_ttl_seconds, event_access_ttl_seconds
-            ) values (
-                :clientId, 'PUBLIC', :grantType, :transition,
-                'backend-api', 'tenant.read,events.read,events.write', 900, 600
-            )
-            """.trimIndent(),
+        clientPolicyRepository.save(
+            ClientPolicy(
+                clientId = PUBLIC_POLICY_CLIENT_ID,
+                clientType = ClientType.PUBLIC,
+                allowedGrantTypes = setOf(AuthorizationGrantType.TOKEN_EXCHANGE.value),
+                allowedTransitions = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),
+                allowedAudiences = setOf("backend-api"),
+                allowedScopes = setOf("tenant.read", "events.read", "events.write"),
+                tenantAccessTtl = java.time.Duration.ofSeconds(900),
+                eventAccessTtl = java.time.Duration.ofSeconds(600),
+            ),
         )
-            .param("clientId", PUBLIC_POLICY_CLIENT_ID)
-            .param("grantType", AuthorizationGrantType.TOKEN_EXCHANGE.value)
-            .param("transition", TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT)
-            .update()
     }
 
     private companion object {
