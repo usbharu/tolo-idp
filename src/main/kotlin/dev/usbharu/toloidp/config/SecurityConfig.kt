@@ -20,29 +20,40 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
 import org.springframework.http.HttpStatus
+import org.springframework.http.converter.HttpMessageConverter
+import org.springframework.http.server.ServletServerHttpResponse
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.security.access.hierarchicalroles.RoleHierarchy
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration
 import org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization.OAuth2AuthorizationServerConfigurer
-import org.springframework.security.access.hierarchicalroles.RoleHierarchy
+import org.springframework.security.core.AuthenticationException
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException
+import org.springframework.security.oauth2.core.OAuth2Error
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes
 import org.springframework.security.oauth2.core.OAuth2Token
+import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
+import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMessageConverter
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.oauth2.jwt.JwtEncoder
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder
+import org.springframework.security.oauth2.server.authorization.OAuth2TokenIntrospection
 import org.springframework.security.oauth2.server.authorization.JdbcOAuth2AuthorizationConsentService
 import org.springframework.security.oauth2.server.authorization.JdbcOAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationServerMetadataClaimNames
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenIntrospectionAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenExchangeAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
+import org.springframework.security.oauth2.server.authorization.http.converter.OAuth2TokenIntrospectionHttpMessageConverter
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings
 import org.springframework.security.oauth2.server.authorization.token.DelegatingOAuth2TokenGenerator
 import org.springframework.security.oauth2.server.authorization.token.JwtGenerator
@@ -51,6 +62,8 @@ import org.springframework.security.oauth2.server.authorization.web.authenticati
 import org.springframework.security.provisioning.JdbcUserDetailsManager
 import org.springframework.security.provisioning.UserDetailsManager
 import org.springframework.security.web.SecurityFilterChain
+import org.springframework.security.web.authentication.AuthenticationFailureHandler
+import org.springframework.security.web.authentication.AuthenticationSuccessHandler
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken
 import javax.sql.DataSource
@@ -185,6 +198,7 @@ class SecurityConfig {
                 }
             }
                 .tokenEndpoint { tokenEndpoint ->
+                tokenEndpoint.errorResponseHandler(tokenEndpointErrorResponseHandler())
                 tokenEndpoint.authenticationProviders { providers ->
                     providers.removeIf { it is OAuth2TokenExchangeAuthenticationProvider }
                     providers.add(
@@ -202,6 +216,9 @@ class SecurityConfig {
                     )
                 }
             }
+                .tokenIntrospectionEndpoint { introspectionEndpoint ->
+                    introspectionEndpoint.introspectionResponseHandler(tokenIntrospectionResponseHandler())
+                }
         }
 
         http.securityMatcher(authorizationServerConfigurer.endpointsMatcher)
@@ -232,6 +249,39 @@ class SecurityConfig {
     @Bean
     fun registeredClientRepository(jdbcTemplate: JdbcTemplate): RegisteredClientRepository =
         JdbcRegisteredClientRepository(jdbcTemplate)
+
+    private fun tokenEndpointErrorResponseHandler(): AuthenticationFailureHandler {
+        val converter: HttpMessageConverter<OAuth2Error> = OAuth2ErrorHttpMessageConverter()
+        return AuthenticationFailureHandler { _, response, exception ->
+            val error = tokenEndpointError(exception)
+            val httpResponse = ServletServerHttpResponse(response)
+            httpResponse.setStatusCode(HttpStatus.BAD_REQUEST)
+            converter.write(error, null, httpResponse)
+        }
+    }
+
+    private fun tokenEndpointError(exception: AuthenticationException): OAuth2Error =
+        if (exception is OAuth2AuthenticationException &&
+            exception.error.errorCode == OAuth2ErrorCodes.INVALID_REQUEST &&
+            exception.error.description?.contains(OAuth2ParameterNames.RESOURCE) == true
+        ) {
+            OAuth2Error("invalid_target")
+        } else if (exception is OAuth2AuthenticationException) {
+            exception.error
+        } else {
+            OAuth2Error(OAuth2ErrorCodes.INVALID_REQUEST)
+        }
+
+    private fun tokenIntrospectionResponseHandler(): AuthenticationSuccessHandler {
+        val converter = OAuth2TokenIntrospectionHttpMessageConverter()
+        return AuthenticationSuccessHandler { _, response, authentication ->
+            val tokenIntrospection = authentication as OAuth2TokenIntrospectionAuthenticationToken
+            val filteredClaims = tokenIntrospection.tokenClaims.claims
+                .filterKeys { it in INTROSPECTION_RESPONSE_CLAIMS }
+            val filtered = OAuth2TokenIntrospection.withClaims(filteredClaims).build()
+            converter.write(filtered, null, ServletServerHttpResponse(response))
+        }
+    }
 
     @Bean
     fun authorizationService(
@@ -344,4 +394,24 @@ class SecurityConfig {
 
     @Bean
     fun clock(): java.time.Clock = java.time.Clock.systemUTC()
+
+    private companion object {
+        val INTROSPECTION_RESPONSE_CLAIMS = setOf(
+            "active",
+            "client_id",
+            "scope",
+            "aud",
+            "iss",
+            "sub",
+            "exp",
+            "iat",
+            "nbf",
+            "jti",
+            "token_type",
+            "token_use",
+            "resource",
+            "tenant_id",
+            "event_id",
+        )
+    }
 }

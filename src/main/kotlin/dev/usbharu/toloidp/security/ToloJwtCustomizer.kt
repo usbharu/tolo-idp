@@ -74,9 +74,13 @@ class ToloJwtCustomizer(
             )
             throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))
         }
-        val audience = authorizationRequest.additionalParameters[OAuth2ParameterNames.AUDIENCE] as? String
-            ?: policy.allowedAudiences.singleOrNull()
-            ?: throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))
+        val audienceParameter = authorizationRequest.additionalParameters[OAuth2ParameterNames.AUDIENCE]
+        val audience = when (audienceParameter) {
+            null -> policy.allowedAudiences.singleOrNull()
+                ?: throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))
+            is String -> audienceParameter
+            else -> throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))
+        }
         if (audience !in policy.allowedAudiences) {
             throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))
         }

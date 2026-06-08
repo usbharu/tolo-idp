@@ -71,7 +71,11 @@ class TokenIntrospectionEndpointTests(
             .andExpect(jsonPath("$.token_use").value(TOKEN_USE_TENANT_ACCESS))
             .andExpect(jsonPath("$.resource").value("https://api.example.com/tenants/tenant-1"))
             .andExpect(jsonPath("$.tenant_id").value("tenant-1"))
+            .andExpect(jsonPath("$.role").doesNotExist())
+            .andExpect(jsonPath("$.tenant_role").doesNotExist())
+            .andExpect(jsonPath("$.event_role").doesNotExist())
             .andExpect(content().string(not(containsString(tokenValue))))
+            .andExpect(content().string(not(containsString("secret"))))
     }
 
     @Test
@@ -94,7 +98,29 @@ class TokenIntrospectionEndpointTests(
             .andExpect(jsonPath("$.token_use").value(TOKEN_USE_EVENT_ACCESS))
             .andExpect(jsonPath("$.tenant_id").value("tenant-1"))
             .andExpect(jsonPath("$.event_id").value("event-1"))
+            .andExpect(jsonPath("$.role").doesNotExist())
+            .andExpect(jsonPath("$.tenant_role").doesNotExist())
+            .andExpect(jsonPath("$.event_role").doesNotExist())
             .andExpect(content().string(not(containsString(tokenValue))))
+    }
+
+    @Test
+    fun introspectionDoesNotExposeRoleClaimsEvenIfStoredWithToken() {
+        val tokenValue = "role-claim-token-${UUID.randomUUID()}"
+        saveAuthorization(
+            tokenValue = tokenValue,
+            claims = tokenClaims(includeForbiddenRoleClaims = true),
+        )
+
+        mockMvc.perform(introspectionRequest("client-123", "secret", tokenValue))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.active").value(true))
+            .andExpect(jsonPath("$.role").doesNotExist())
+            .andExpect(jsonPath("$.tenant_role").doesNotExist())
+            .andExpect(jsonPath("$.event_role").doesNotExist())
+            .andExpect(content().string(not(containsString("owner"))))
+            .andExpect(content().string(not(containsString(tokenValue))))
+            .andExpect(content().string(not(containsString("secret"))))
     }
 
     @Test
@@ -108,14 +134,26 @@ class TokenIntrospectionEndpointTests(
         mockMvc.perform(introspectionRequest("client-123", "secret", "missing-token"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.active").value(false))
+            .andExpect(jsonPath("$.error").doesNotExist())
+            .andExpect(jsonPath("$.client_id").doesNotExist())
+            .andExpect(jsonPath("$.token_use").doesNotExist())
+            .andExpect(content().string(not(containsString("missing-token"))))
 
         mockMvc.perform(introspectionRequest("client-123", "secret", expiredToken))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.active").value(false))
+            .andExpect(jsonPath("$.error").doesNotExist())
+            .andExpect(jsonPath("$.client_id").doesNotExist())
+            .andExpect(jsonPath("$.token_use").doesNotExist())
+            .andExpect(content().string(not(containsString(expiredToken))))
 
         mockMvc.perform(introspectionRequest("client-123", "secret", revokedToken))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.active").value(false))
+            .andExpect(jsonPath("$.error").doesNotExist())
+            .andExpect(jsonPath("$.client_id").doesNotExist())
+            .andExpect(jsonPath("$.token_use").doesNotExist())
+            .andExpect(content().string(not(containsString(revokedToken))))
     }
 
     @Test
@@ -200,6 +238,7 @@ class TokenIntrospectionEndpointTests(
         resource: String = "https://api.example.com/tenants/tenant-1",
         tenantId: String = "tenant-1",
         eventId: String? = null,
+        includeForbiddenRoleClaims: Boolean = false,
     ): Map<String, Any> {
         val claims = linkedMapOf<String, Any>(
             "iss" to "http://localhost:8080",
@@ -217,6 +256,11 @@ class TokenIntrospectionEndpointTests(
         )
         if (eventId != null) {
             claims["event_id"] = eventId
+        }
+        if (includeForbiddenRoleClaims) {
+            claims["role"] = "owner"
+            claims["tenant_role"] = "owner"
+            claims["event_role"] = "staff"
         }
         return claims
     }

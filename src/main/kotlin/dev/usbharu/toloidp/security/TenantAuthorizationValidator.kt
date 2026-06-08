@@ -57,9 +57,13 @@ class TenantAuthorizationValidator(
             throwAuthorizationError("invalid_target", OAuth2ParameterNames.RESOURCE)
         }
 
-        val audience = authentication.additionalParameters[OAuth2ParameterNames.AUDIENCE] as? String
-            ?: policy.allowedAudiences.singleOrNull()
-            ?: throwAuthorizationError("invalid_target", OAuth2ParameterNames.AUDIENCE)
+        val audienceParameter = authentication.additionalParameters[OAuth2ParameterNames.AUDIENCE]
+        val audience = when (audienceParameter) {
+            null -> policy.allowedAudiences.singleOrNull()
+                ?: throwAuthorizationError("invalid_target", OAuth2ParameterNames.AUDIENCE)
+            is String -> audienceParameter
+            else -> throwAuthorizationError("invalid_target", OAuth2ParameterNames.AUDIENCE)
+        }
         if (audience !in policy.allowedAudiences) {
             throwAuthorizationError("invalid_target", OAuth2ParameterNames.AUDIENCE)
         }

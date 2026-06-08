@@ -137,6 +137,28 @@ class SecurityComponentTests(
     }
 
     @Test
+    fun tenantAuthorizationValidatorRejectsNonStringAudienceParameter() {
+        val validator = TenantAuthorizationValidator(clientPolicyRepository, resourceParser, relationService, scopePolicy)
+
+        val exception = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
+            validator.accept(authorizationContext(audience = listOf("backend-api", "other-api")))
+        }
+
+        assertEquals("invalid_target", exception.error.errorCode)
+    }
+
+    @Test
+    fun tenantAuthorizationValidatorRejectsInvalidTenantResource() {
+        val validator = TenantAuthorizationValidator(clientPolicyRepository, resourceParser, relationService, scopePolicy)
+
+        val exception = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
+            validator.accept(authorizationContext(resource = "https://api.example.com/tenants/tenant-a/events/event-1"))
+        }
+
+        assertEquals("invalid_target", exception.error.errorCode)
+    }
+
+    @Test
     fun tenantAuthorizationValidatorRejectsScopeOutsideRole() {
         cacheRepository.deleteAll()
         cacheMembership(
@@ -183,6 +205,34 @@ class SecurityComponentTests(
         assertEquals("https://api.example.com/tenants/tenant-a", claims["resource"])
         assertEquals("tenant.read events.read", claims["scope"])
         assertTrue(claims.containsKey("jti"))
+        assertFalse(claims.containsKey("role"))
+        assertFalse(claims.containsKey("tenant_role"))
+        assertFalse(claims.containsKey("event_role"))
+    }
+
+    @Test
+    fun jwtCustomizerRejectsTenantAccessNonStringAudienceParameter() {
+        val context = jwtContext(
+            grantType = AuthorizationGrantType.AUTHORIZATION_CODE,
+            scopes = setOf("tenant.read"),
+            authorization = OAuth2Authorization.withRegisteredClient(registeredClient)
+                .principalName("user-123")
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .attribute(
+                    OAuth2AuthorizationRequest::class.java.name,
+                    oauthAuthorizationRequest(
+                        resource = "https://api.example.com/tenants/tenant-a",
+                        audience = listOf("backend-api", "other-api"),
+                        scopes = setOf("tenant.read"),
+                    ),
+                )
+                .build(),
+        )
+
+        val exception = assertFailsWith<OAuth2AuthenticationException> {
+            jwtCustomizer.customize(context)
+        }
+        assertEquals("invalid_target", exception.error.errorCode)
     }
 
     @Test
@@ -239,6 +289,9 @@ class SecurityComponentTests(
         assertEquals("event-1", claims["event_id"])
         assertEquals("https://api.example.com/tenants/tenant-a/events/event-1", claims["resource"])
         assertEquals("events.read", claims["scope"])
+        assertFalse(claims.containsKey("role"))
+        assertFalse(claims.containsKey("tenant_role"))
+        assertFalse(claims.containsKey("event_role"))
     }
 
     @Test
@@ -282,7 +335,7 @@ class SecurityComponentTests(
 
     private fun authorizationContext(
         resource: String = "https://api.example.com/tenants/tenant-a",
-        audience: String = "backend-api",
+        audience: Any = "backend-api",
         scopes: Set<String> = setOf("tenant.read"),
     ): OAuth2AuthorizationCodeRequestAuthenticationContext {
         val authentication = OAuth2AuthorizationCodeRequestAuthenticationToken(
@@ -305,7 +358,7 @@ class SecurityComponentTests(
 
     private fun oauthAuthorizationRequest(
         resource: String,
-        audience: String,
+        audience: Any,
         scopes: Set<String>,
     ): OAuth2AuthorizationRequest =
         OAuth2AuthorizationRequest.authorizationCode()

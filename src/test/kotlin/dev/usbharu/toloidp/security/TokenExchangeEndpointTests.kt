@@ -32,12 +32,16 @@ import org.springframework.security.oauth2.server.authorization.settings.ClientS
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.security.Principal
 import java.time.Instant
 import java.util.UUID
+import org.hamcrest.Matchers.containsString
+import org.hamcrest.Matchers.not
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 
 @SpringBootTest
@@ -99,8 +103,12 @@ class TokenExchangeEndpointTests(
         assertEquals("tenant-a", jwt.claims["tenant_id"])
         assertEquals("event-1", jwt.claims["event_id"])
         assertEquals("https://api.example.com/tenants/tenant-a/events/event-1", jwt.claims["resource"])
+        assertEquals(1, jwt.audience.size)
         assertEquals(listOf("backend-api"), jwt.audience)
         assertEquals("events.read", jwt.claims["scope"])
+        assertFalse(jwt.claims.containsKey("role"))
+        assertFalse(jwt.claims.containsKey("tenant_role"))
+        assertFalse(jwt.claims.containsKey("event_role"))
 
         val audit = latestAudit()
         assertEquals("success", audit["result"])
@@ -143,6 +151,23 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
+    fun rejectsMissingOrMultipleAudienceAsInvalidTarget() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, audience = null))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_target"))
+
+        assertEquals("audience_not_allowed", latestAudit()["failure_reason"])
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken).param("audience", "other-api"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_target"))
+
+        assertEquals("audience_not_allowed", latestAudit()["failure_reason"])
+    }
+
+    @Test
     fun rejectsInvalidEventResourceAsInvalidTarget() {
         val subjectToken = saveTenantAuthorization()
 
@@ -151,6 +176,71 @@ class TokenExchangeEndpointTests(
             .andExpect(jsonPath("$.error").value("invalid_target"))
 
         assertEquals("resource_invalid_format", latestAudit()["failure_reason"])
+    }
+
+    @Test
+    fun rejectsMissingOrMultipleResourceAsInvalidTarget() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, resource = null))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_target"))
+
+        assertEquals("resource_invalid_format", latestAudit()["failure_reason"])
+
+        mockMvc.perform(
+            tokenExchangeRequest(subjectToken = subjectToken)
+                .param("resource", "https://api.example.com/tenants/tenant-a/events/event-2"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_target"))
+
+        assertEquals("resource_invalid_format", latestAudit()["failure_reason"])
+    }
+
+    @Test
+    fun rejectsDisallowedResourceUriShapesAsInvalidTarget() {
+        val subjectToken = saveTenantAuthorization()
+        val rejectedResources = listOf(
+            "http://api.example.com/tenants/tenant-a/events/event-1",
+            "https://other.example.com/tenants/tenant-a/events/event-1",
+            "https://user@api.example.com/tenants/tenant-a/events/event-1",
+            "https://api.example.com/tenants/tenant-a/events/event-1?debug=true",
+            "https://api.example.com/tenants/tenant-a/events/event-1#fragment",
+        )
+
+        rejectedResources.forEach { resource ->
+            mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, resource = resource))
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.error").value("invalid_target"))
+                .andExpect(jsonPath("$.error_description").doesNotExist())
+        }
+    }
+
+    @Test
+    fun ignoresLegacyTenantAndEventParametersInTokenExchange() {
+        val subjectToken = saveTenantAuthorization(tenantId = "tenant-b")
+
+        mockMvc.perform(
+            tokenExchangeRequest(subjectToken = subjectToken)
+                .param("x_tenant_id", "tenant-a")
+                .param("x_event_id", "event-1"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+
+        assertEquals("event_not_in_tenant", latestAudit()["failure_reason"])
+    }
+
+    @Test
+    fun rejectsMissingOrBlankSubjectTokenAsInvalidRequest() {
+        mockMvc.perform(tokenExchangeRequest(subjectToken = null))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = ""))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
     }
 
     @Test
@@ -247,6 +337,18 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
+    fun failureResponseDoesNotLeakSubjectTokenOrClientSecret() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, resource = "https://api.example.com/tenants/tenant-a/events/event-missing"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+            .andExpect(content().string(not(containsString(subjectToken))))
+            .andExpect(content().string(not(containsString("secret"))))
+    }
+
+    @Test
     fun rejectsUnsupportedSubjectTokenTypeAsInvalidRequest() {
         val subjectToken = saveTenantAuthorization()
 
@@ -259,22 +361,32 @@ class TokenExchangeEndpointTests(
     }
 
     private fun tokenExchangeRequest(
-        subjectToken: String,
+        subjectToken: String?,
         clientId: String = "client-123",
         clientSecret: String = "secret",
-        audience: String = "backend-api",
-        resource: String = "https://api.example.com/tenants/tenant-a/events/event-1",
-        scope: String = "events.read",
+        audience: String? = "backend-api",
+        resource: String? = "https://api.example.com/tenants/tenant-a/events/event-1",
+        scope: String? = "events.read",
     ) =
         post("/oauth2/token")
             .with(httpBasic(clientId, clientSecret))
             .contentType(MediaType.APPLICATION_FORM_URLENCODED)
             .param("grant_type", AuthorizationGrantType.TOKEN_EXCHANGE.value)
-            .param("subject_token", subjectToken)
             .param("subject_token_type", ACCESS_TOKEN_TYPE)
-            .param("audience", audience)
-            .param("resource", resource)
-            .param("scope", scope)
+            .apply {
+                if (subjectToken != null) {
+                    param("subject_token", subjectToken)
+                }
+                if (audience != null) {
+                    param("audience", audience)
+                }
+                if (resource != null) {
+                    param("resource", resource)
+                }
+                if (scope != null) {
+                    param("scope", scope)
+                }
+            }
 
     private fun saveTenantAuthorization(
         tokenUse: String = TOKEN_USE_TENANT_ACCESS,
