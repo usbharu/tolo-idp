@@ -9,6 +9,7 @@ import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.ScopeNotAllowedException
 import dev.usbharu.toloidp.scope.ScopePolicy
+import org.slf4j.LoggerFactory
 import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.core.Authentication
 import org.springframework.security.oauth2.core.AuthorizationGrantType
@@ -44,11 +45,19 @@ class SpecTokenExchangeAuthenticationProvider(
     private val clock: Clock,
 ) : AuthenticationProvider {
     override fun authenticate(authentication: Authentication): Authentication {
+        log.trace("authenticate started: authenticationType={}", authentication::class.java.simpleName)
         val tokenExchange = authentication as OAuth2TokenExchangeAuthenticationToken
         val clientPrincipal = authenticatedClient(tokenExchange)
         val registeredClient = clientPrincipal.registeredClient
             ?: throw OAuth2AuthenticationException(OAuth2Error("invalid_client"))
         val requestedScopes = tokenExchange.scopes
+        log.info(
+            "Token Exchange started: clientId={}, audienceCount={}, resourceCount={}, scopeCount={}",
+            registeredClient.clientId,
+            tokenExchange.audiences.size,
+            tokenExchange.resources.size,
+            requestedScopes.size,
+        )
         var audit = TokenAuditEvent(
             clientId = registeredClient.clientId,
             requestedTokenUse = TOKEN_USE_EVENT_ACCESS,
@@ -61,6 +70,13 @@ class SpecTokenExchangeAuthenticationProvider(
         try {
             val policy = clientPolicyRepository.findByClientId(registeredClient.clientId)
                 ?: fail("invalid_request", "client_not_allowed")
+            log.debug(
+                "Client policy lookup completed: clientId={}, clientType={}, allowedAudienceCount={}, allowedScopeCount={}",
+                registeredClient.clientId,
+                policy.clientType,
+                policy.allowedAudiences.size,
+                policy.allowedScopes.size,
+            )
             if (policy.clientType != ClientType.CONFIDENTIAL) {
                 fail("invalid_grant", "client_not_allowed")
             }
@@ -85,10 +101,19 @@ class SpecTokenExchangeAuthenticationProvider(
 
             val subjectAuthorization = authorizationService.findByToken(tokenExchange.subjectToken, OAuth2TokenType.ACCESS_TOKEN)
                 ?: fail("invalid_grant", "token_revoked")
+            log.debug("Subject token lookup completed: clientId={}, found=true", registeredClient.clientId)
             val subjectToken = subjectAuthorization.getToken<OAuth2Token>(tokenExchange.subjectToken)
                 ?: fail("invalid_grant", "token_revoked")
             val claims = subjectToken.claims ?: fail("invalid_grant", "token_revoked")
-            if (!subjectToken.isActive || isDenied(claims["jti"] as? String)) {
+            val denied = isDenied(claims["jti"] as? String)
+            log.debug(
+                "Subject token status checked: clientId={}, active={}, jtiPresent={}, denied={}",
+                registeredClient.clientId,
+                subjectToken.isActive,
+                claims["jti"] is String,
+                denied,
+            )
+            if (!subjectToken.isActive || denied) {
                 fail("invalid_grant", "token_revoked")
             }
             val subject = claims["sub"] as? String ?: subjectAuthorization.principalName
@@ -109,13 +134,36 @@ class SpecTokenExchangeAuthenticationProvider(
                 scopePolicy.requireAllowed(requestedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
                 scopePolicy.requireAllowed(requestedScopes, subjectScopes, "scope_exceeds_subject_token")
                 val membership = relationService.getMembership(eventResource.tenantId, subject)
+                log.debug(
+                    "Relation membership lookup completed: clientId={}, tenantId={}, subject={}, eventCount={}",
+                    registeredClient.clientId,
+                    eventResource.tenantId,
+                    subject,
+                    membership.events.size,
+                )
                 val eventMembership = membership.events.find { it.eventId == eventResource.eventId }
                     ?: fail("invalid_grant", "user_not_event_member")
                 scopePolicy.requireAllowed(requestedScopes, scopePolicy.allowedScopes(eventMembership.role), "scope_not_allowed_for_role")
             } catch (ex: ScopeNotAllowedException) {
+                log.warn(
+                    "Token Exchange scope validation failed: clientId={}, tenantId={}, eventId={}, scopeCount={}",
+                    registeredClient.clientId,
+                    eventResource.tenantId,
+                    eventResource.eventId,
+                    requestedScopes.size,
+                    ex,
+                )
                 val code = if (ex.reason == "scope_exceeds_subject_token") "invalid_grant" else "invalid_scope"
                 fail(code, ex.reason)
             } catch (ex: RelationLookupException) {
+                log.warn(
+                    "Token Exchange relation lookup failed: clientId={}, tenantId={}, eventId={}, subject={}",
+                    registeredClient.clientId,
+                    eventResource.tenantId,
+                    eventResource.eventId,
+                    subject,
+                    ex,
+                )
                 fail("invalid_grant", ex.reason)
             }
 
@@ -156,6 +204,14 @@ class SpecTokenExchangeAuthenticationProvider(
                     issuedJti = (generatedAccessToken as? Jwt)?.id,
                 ),
             )
+            log.info(
+                "Token Exchange completed: clientId={}, tenantId={}, eventId={}, scopeCount={}",
+                registeredClient.clientId,
+                audit.tenantId,
+                audit.eventId,
+                requestedScopes.size,
+            )
+            log.trace("authenticate completed: clientId={}", registeredClient.clientId)
             return OAuth2AccessTokenAuthenticationToken(
                 registeredClient,
                 clientPrincipal,
@@ -165,6 +221,15 @@ class SpecTokenExchangeAuthenticationProvider(
             )
         } catch (ex: SpecOAuth2Failure) {
             auditService.record(audit.copy(result = "failure", failureReason = ex.failureReason))
+            log.info(
+                "Token Exchange failed: clientId={}, errorCode={}, audienceCount={}, resourceCount={}, scopeCount={}",
+                registeredClient.clientId,
+                ex.errorCode,
+                tokenExchange.audiences.size,
+                tokenExchange.resources.size,
+                requestedScopes.size,
+            )
+            log.trace("authenticate completed with failure: clientId={}", registeredClient.clientId)
             throw OAuth2AuthenticationException(OAuth2Error(ex.errorCode))
         }
     }
@@ -209,6 +274,10 @@ class SpecTokenExchangeAuthenticationProvider(
 
     private fun fail(errorCode: String, reason: String): Nothing {
         throw SpecOAuth2Failure(errorCode, reason)
+    }
+
+    companion object {
+        private val log = LoggerFactory.getLogger(SpecTokenExchangeAuthenticationProvider::class.java)
     }
 }
 
