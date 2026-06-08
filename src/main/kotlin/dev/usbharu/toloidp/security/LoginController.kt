@@ -3,6 +3,8 @@ package dev.usbharu.toloidp.security
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import jakarta.servlet.http.HttpSession
+import dev.usbharu.toloidp.logging.structuredInfo
+import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.relation.RelationLookupException
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
@@ -36,27 +38,59 @@ class LoginController(
         @RequestBody request: LoginRequest,
         httpRequest: HttpServletRequest,
     ): ResponseEntity<Any> {
-        log.info("Login started: username={}, tenantId={}", request.username, request.tenantId)
+        log.structuredInfo(
+            "Login started",
+            "event" to "login_started",
+            "username" to request.username,
+            "tenant_id" to request.tenantId,
+        )
         try {
             resourceParser.requireValidId(request.tenantId)
         } catch (ex: ResourceValidationException) {
-            log.warn("Login rejected due to invalid tenant id: username={}, tenantId={}", request.username, request.tenantId, ex)
+            log.structuredWarn(
+                "Login rejected",
+                ex,
+                "event" to "login_rejected",
+                "username" to request.username,
+                "tenant_id" to request.tenantId,
+                "failure_reason" to "invalid_tenant_id",
+            )
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid tenantId")
         }
         val user = try {
             userDetailsService.loadUserByUsername(request.username)
         } catch (ex: RuntimeException) {
-            log.warn("Login rejected due to user lookup failure: username={}, tenantId={}", request.username, request.tenantId, ex)
+            log.structuredWarn(
+                "Login rejected",
+                ex,
+                "event" to "login_rejected",
+                "username" to request.username,
+                "tenant_id" to request.tenantId,
+                "failure_reason" to "user_lookup_failed",
+            )
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
         }
         if (!passwordEncoder.matches(request.password, user.password)) {
-            log.warn("Login rejected due to bad credentials: username={}, tenantId={}", request.username, request.tenantId)
+            log.structuredWarn(
+                "Login rejected",
+                "event" to "login_rejected",
+                "username" to request.username,
+                "tenant_id" to request.tenantId,
+                "failure_reason" to "bad_credentials",
+            )
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
         }
         try {
             relationService.getMembership(request.tenantId, user.username)
         } catch (ex: RelationLookupException) {
-            log.warn("Login rejected due to tenant membership failure: username={}, tenantId={}", user.username, request.tenantId, ex)
+            log.structuredWarn(
+                "Login rejected",
+                ex,
+                "event" to "login_rejected",
+                "username" to user.username,
+                "tenant_id" to request.tenantId,
+                "failure_reason" to ex.reason,
+            )
             throw ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant is not allowed")
         }
         val authentication = UsernamePasswordAuthenticationToken.authenticated(
@@ -69,7 +103,14 @@ class LoginController(
         val session = httpRequest.getSession(true)
         session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, context)
         session.setAttribute(SELECTED_TENANT_SESSION_ATTRIBUTE, request.tenantId)
-        log.info("Login completed: username={}, tenantId={}, authorityCount={}", user.username, request.tenantId, user.authorities.size)
+        log.structuredInfo(
+            "Login completed",
+            "event" to "login_completed",
+            "username" to user.username,
+            "tenant_id" to request.tenantId,
+            "authority_count" to user.authorities.size,
+            "result" to "success",
+        )
         return ResponseEntity.ok(
             LoginResponse(
                 username = user.username,
@@ -85,11 +126,20 @@ class LoginController(
         session: HttpSession?,
         response: HttpServletResponse,
     ): ResponseEntity<Void> {
-        log.info("Logout started: sessionPresent={}", session != null)
+        log.structuredInfo(
+            "Logout started",
+            "event" to "logout_started",
+            "session_present" to (session != null),
+        )
         SecurityContextHolder.clearContext()
         session?.invalidate()
         response.status = HttpStatus.NO_CONTENT.value()
-        log.info("Logout completed: sessionInvalidated={}", session != null)
+        log.structuredInfo(
+            "Logout completed",
+            "event" to "logout_completed",
+            "session_invalidated" to (session != null),
+            "result" to "success",
+        )
         return ResponseEntity.noContent().build()
     }
 

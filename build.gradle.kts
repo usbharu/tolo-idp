@@ -22,6 +22,7 @@ repositories {
 }
 
 dependencies {
+    implementation(platform("com.google.cloud:spring-cloud-gcp-dependencies:8.0.4"))
     implementation("org.springframework.boot:spring-boot-h2console")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-data-jdbc")
@@ -31,6 +32,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
+    implementation("com.google.cloud:spring-cloud-gcp-starter-logging")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("com.nimbusds:nimbus-jose-jwt")
     implementation("org.thymeleaf.extras:thymeleaf-extras-springsecurity6")

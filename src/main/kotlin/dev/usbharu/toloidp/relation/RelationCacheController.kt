@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.relation
 
+import dev.usbharu.toloidp.logging.structuredInfo
 import dev.usbharu.toloidp.resource.ResourceParser
 import org.slf4j.LoggerFactory
 import org.springframework.http.ResponseEntity
@@ -17,9 +18,20 @@ class RelationCacheController(
     @DeleteMapping
     fun purgeAll(): ResponseEntity<Void> {
         val cacheCount = cacheRepository.count()
-        log.info("Relation membership cache purge started: target=all, cacheCount={}", cacheCount)
+        log.structuredInfo(
+            "Relation membership cache purge started",
+            "event" to "relation_membership_cache_purge_started",
+            "target" to "all",
+            "cache_count" to cacheCount,
+        )
         cacheRepository.deleteAll()
-        log.info("Relation membership cache purge completed: target=all, purgedCount={}", cacheCount)
+        log.structuredInfo(
+            "Relation membership cache purge completed",
+            "event" to "relation_membership_cache_purge_completed",
+            "target" to "all",
+            "purged_count" to cacheCount,
+            "result" to "success",
+        )
         return ResponseEntity.noContent().build()
     }
 
@@ -29,9 +41,20 @@ class RelationCacheController(
         @PathVariable userId: String,
     ): ResponseEntity<Void> {
         resourceParser.requireValidId(tenantId)
-        log.info("Relation membership cache purge started: tenantId={}, userId={}", tenantId, userId)
+        log.structuredInfo(
+            "Relation membership cache purge started",
+            "event" to "relation_membership_cache_purge_started",
+            "tenant_id" to tenantId,
+            "subject" to userId,
+        )
         cacheRepository.deleteById(RelationMembershipCacheId(tenantId, userId))
-        log.info("Relation membership cache purge completed: tenantId={}, userId={}", tenantId, userId)
+        log.structuredInfo(
+            "Relation membership cache purge completed",
+            "event" to "relation_membership_cache_purge_completed",
+            "tenant_id" to tenantId,
+            "subject" to userId,
+            "result" to "success",
+        )
         return ResponseEntity.noContent().build()
     }
 

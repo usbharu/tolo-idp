@@ -1,6 +1,8 @@
 package dev.usbharu.toloidp.relation
 
 import dev.usbharu.toloidp.config.IdpProperties
+import dev.usbharu.toloidp.logging.structuredDebug
+import dev.usbharu.toloidp.logging.structuredTrace
 import dev.usbharu.toloidp.resource.ResourceParser
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
@@ -20,22 +22,30 @@ class CachedRelationService(
     private val clock: Clock,
 ) : RelationService {
     override fun getMembership(tenantId: String, userId: String): TenantMembership {
-        log.trace("getMembership started: tenantId={}, userId={}", tenantId, userId)
+        log.structuredTrace("Relation membership lookup started", "event" to "relation_membership_lookup_started", "tenant_id" to tenantId, "subject" to userId)
         resourceParser.requireValidId(tenantId)
         val now = Instant.now(clock)
         cacheRepository.findByCacheIdTenantIdAndCacheIdUserIdAndExpiresAtAfter(tenantId, userId, now)
             ?.let {
-                log.debug(
-                    "Relation membership cache hit: tenantId={}, userId={}, expiresAt={}",
-                    tenantId,
-                    userId,
-                    it.expiresAt,
+                log.structuredDebug(
+                    "Relation membership cache hit",
+                    "event" to "relation_membership_cache_lookup",
+                    "tenant_id" to tenantId,
+                    "subject" to userId,
+                    "cache_hit" to true,
+                    "expires_at" to it.expiresAt,
                 )
-                log.trace("getMembership completed from cache: tenantId={}, userId={}", tenantId, userId)
+                log.structuredTrace("Relation membership lookup completed", "event" to "relation_membership_lookup_completed", "tenant_id" to tenantId, "subject" to userId, "cache_hit" to true)
                 return it.membership
             }
 
-        log.debug("Relation membership cache miss: tenantId={}, userId={}", tenantId, userId)
+        log.structuredDebug(
+            "Relation membership cache miss",
+            "event" to "relation_membership_cache_lookup",
+            "tenant_id" to tenantId,
+            "subject" to userId,
+            "cache_hit" to false,
+        )
         val membership = delegate.getMembership(tenantId, userId)
         val cacheId = RelationMembershipCacheId(tenantId, userId)
         cacheRepository.deleteById(cacheId)
@@ -48,14 +58,15 @@ class CachedRelationService(
                 expiresAt = expiresAt,
             ),
         )
-        log.debug(
-            "Relation membership cached: tenantId={}, userId={}, eventCount={}, expiresAt={}",
-            tenantId,
-            userId,
-            membership.events.size,
-            expiresAt,
+        log.structuredDebug(
+            "Relation membership cached",
+            "event" to "relation_membership_cached",
+            "tenant_id" to tenantId,
+            "subject" to userId,
+            "event_count" to membership.events.size,
+            "expires_at" to expiresAt,
         )
-        log.trace("getMembership completed after delegate lookup: tenantId={}, userId={}", tenantId, userId)
+        log.structuredTrace("Relation membership lookup completed", "event" to "relation_membership_lookup_completed", "tenant_id" to tenantId, "subject" to userId, "cache_hit" to false)
         return membership
     }
 

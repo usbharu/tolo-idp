@@ -1,6 +1,9 @@
 package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.logging.structuredDebug
+import dev.usbharu.toloidp.logging.structuredTrace
+import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.relation.RelationLookupException
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
@@ -39,14 +42,20 @@ class ToloJwtCustomizer(
 
     private fun customizeTenantAccess(context: JwtEncodingContext) {
         val clientId = context.registeredClient.clientId
-        log.trace("customizeTenantAccess started: clientId={}, scopeCount={}", clientId, context.authorizedScopes.size)
+        log.structuredTrace(
+            "Tenant access JWT customization started",
+            "event" to "tenant_access_jwt_customization_started",
+            "client_id" to clientId,
+            "scope_count" to context.authorizedScopes.size,
+        )
         val policy = clientPolicyRepository.findByClientId(clientId)
             ?: throw OAuth2AuthenticationException("invalid_request")
-        log.debug(
-            "Tenant access client policy loaded: clientId={}, allowedAudienceCount={}, allowedScopeCount={}",
-            clientId,
-            policy.allowedAudiences.size,
-            policy.allowedScopes.size,
+        log.structuredDebug(
+            "Tenant access client policy loaded",
+            "event" to "tenant_access_client_policy_loaded",
+            "client_id" to clientId,
+            "allowed_audience_count" to policy.allowedAudiences.size,
+            "allowed_scope_count" to policy.allowedScopes.size,
         )
         val authorizationRequest = context.authorization
             ?.getAttribute<OAuth2AuthorizationRequest>(OAuth2AuthorizationRequest::class.java.name)
@@ -56,7 +65,13 @@ class ToloJwtCustomizer(
         val tenantResource = try {
             resourceParser.parseTenant(resource)
         } catch (ex: RuntimeException) {
-            log.warn("Tenant access JWT customization rejected invalid resource: clientId={}", clientId, ex)
+            log.structuredWarn(
+                "Tenant access JWT customization rejected",
+                ex,
+                "event" to "tenant_access_jwt_customization_rejected",
+                "client_id" to clientId,
+                "failure_reason" to "invalid_resource",
+            )
             throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))
         }
         val audience = authorizationRequest.additionalParameters[OAuth2ParameterNames.AUDIENCE] as? String
@@ -69,26 +84,36 @@ class ToloJwtCustomizer(
         try {
             val principal = context.getPrincipal<org.springframework.security.core.Authentication>()
             val membership = relationService.getMembership(tenantResource.tenantId, principal.name)
-            log.debug(
-                "Tenant access membership loaded: clientId={}, tenantId={}, principal={}, tenantRole={}",
-                clientId,
-                tenantResource.tenantId,
-                principal.name,
-                membership.tenantRole,
+            log.structuredDebug(
+                "Tenant access membership loaded",
+                "event" to "tenant_access_membership_loaded",
+                "client_id" to clientId,
+                "tenant_id" to tenantResource.tenantId,
+                "subject" to principal.name,
+                "tenant_role" to membership.tenantRole,
             )
             scopePolicy.requireAllowed(context.authorizedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
             scopePolicy.requireAllowed(context.authorizedScopes, scopePolicy.allowedScopes(membership.tenantRole), "scope_not_allowed_for_role")
         } catch (ex: ScopeNotAllowedException) {
-            log.warn(
-                "Tenant access scope validation failed: clientId={}, tenantId={}, scopeCount={}",
-                clientId,
-                tenantResource.tenantId,
-                context.authorizedScopes.size,
+            log.structuredWarn(
+                "Tenant access scope validation failed",
                 ex,
+                "event" to "tenant_access_scope_validation_failed",
+                "client_id" to clientId,
+                "tenant_id" to tenantResource.tenantId,
+                "scope_count" to context.authorizedScopes.size,
+                "failure_reason" to ex.reason,
             )
             throw OAuth2AuthenticationException(OAuth2Error("invalid_scope"))
         } catch (ex: RelationLookupException) {
-            log.warn("Tenant access relation lookup failed: clientId={}, tenantId={}", clientId, tenantResource.tenantId, ex)
+            log.structuredWarn(
+                "Tenant access relation lookup failed",
+                ex,
+                "event" to "tenant_access_relation_lookup_failed",
+                "client_id" to clientId,
+                "tenant_id" to tenantResource.tenantId,
+                "failure_reason" to ex.reason,
+            )
             throw OAuth2AuthenticationException(OAuth2Error("invalid_grant"))
         }
 
@@ -104,21 +129,24 @@ class ToloJwtCustomizer(
             .claim("token_use", TOKEN_USE_TENANT_ACCESS)
             .claim("resource", tenantResource.value)
             .claim("tenant_id", tenantResource.tenantId)
-        log.debug(
-            "Tenant access JWT claims customized: clientId={}, tenantId={}, audience={}, scopeCount={}",
-            clientId,
-            tenantResource.tenantId,
-            audience,
-            context.authorizedScopes.size,
+        log.structuredDebug(
+            "Tenant access JWT claims customized",
+            "event" to "tenant_access_jwt_claims_customized",
+            "client_id" to clientId,
+            "tenant_id" to tenantResource.tenantId,
+            "audience" to audience,
+            "scope_count" to context.authorizedScopes.size,
+            "result" to "success",
         )
-        log.trace("customizeTenantAccess completed: clientId={}, tenantId={}", clientId, tenantResource.tenantId)
+        log.structuredTrace("Tenant access JWT customization completed", "event" to "tenant_access_jwt_customization_completed", "client_id" to clientId, "tenant_id" to tenantResource.tenantId)
     }
 
     private fun customizeEventAccess(context: JwtEncodingContext) {
-        log.trace(
-            "customizeEventAccess started: clientId={}, scopeCount={}",
-            context.registeredClient.clientId,
-            context.authorizedScopes.size,
+        log.structuredTrace(
+            "Event access JWT customization started",
+            "event" to "event_access_jwt_customization_started",
+            "client_id" to context.registeredClient.clientId,
+            "scope_count" to context.authorizedScopes.size,
         )
         val tokenExchange = context.getAuthorizationGrant<OAuth2TokenExchangeAuthenticationToken>()
         val policy = clientPolicyRepository.findByClientId(context.registeredClient.clientId)
@@ -128,7 +156,13 @@ class ToloJwtCustomizer(
         val eventResource = try {
             resourceParser.parseEvent(resource)
         } catch (ex: RuntimeException) {
-            log.warn("Event access JWT customization rejected invalid resource: clientId={}", context.registeredClient.clientId, ex)
+            log.structuredWarn(
+                "Event access JWT customization rejected",
+                ex,
+                "event" to "event_access_jwt_customization_rejected",
+                "client_id" to context.registeredClient.clientId,
+                "failure_reason" to "invalid_resource",
+            )
             throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))
         }
         val audience = tokenExchange.audiences.singleOrNull()
@@ -147,19 +181,22 @@ class ToloJwtCustomizer(
             .claim("resource", eventResource.value)
             .claim("tenant_id", eventResource.tenantId)
             .claim("event_id", eventResource.eventId)
-        log.debug(
-            "Event access JWT claims customized: clientId={}, tenantId={}, eventId={}, audience={}, scopeCount={}",
-            context.registeredClient.clientId,
-            eventResource.tenantId,
-            eventResource.eventId,
-            audience,
-            context.authorizedScopes.size,
+        log.structuredDebug(
+            "Event access JWT claims customized",
+            "event" to "event_access_jwt_claims_customized",
+            "client_id" to context.registeredClient.clientId,
+            "tenant_id" to eventResource.tenantId,
+            "event_id" to eventResource.eventId,
+            "audience" to audience,
+            "scope_count" to context.authorizedScopes.size,
+            "result" to "success",
         )
-        log.trace(
-            "customizeEventAccess completed: clientId={}, tenantId={}, eventId={}",
-            context.registeredClient.clientId,
-            eventResource.tenantId,
-            eventResource.eventId,
+        log.structuredTrace(
+            "Event access JWT customization completed",
+            "event" to "event_access_jwt_customization_completed",
+            "client_id" to context.registeredClient.clientId,
+            "tenant_id" to eventResource.tenantId,
+            "event_id" to eventResource.eventId,
         )
     }
 

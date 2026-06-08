@@ -1,6 +1,9 @@
 package dev.usbharu.toloidp.relation
 
 import dev.usbharu.toloidp.config.IdpProperties
+import dev.usbharu.toloidp.logging.structuredDebug
+import dev.usbharu.toloidp.logging.structuredTrace
+import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.resource.ResourceValidationException
 import dev.usbharu.toloidp.scope.RelationRole
@@ -30,17 +33,19 @@ class HttpRelationService(
         .build()
 
     override fun getMembership(tenantId: String, userId: String): TenantMembership {
-        log.trace("getMembership started: tenantId={}, userId={}", tenantId, userId)
+        log.structuredTrace("Relation membership HTTP lookup started", "event" to "relation_membership_http_lookup_started", "tenant_id" to tenantId, "subject" to userId)
         resourceParser.requireValidId(tenantId)
         val response = getOrNull<MembershipResponse>("/tenants/{tenantId}/users/{userId}", tenantId, userId)
             ?: throw RelationLookupException("tenant_not_found")
         if (response.tenant.id != tenantId || response.user.id != userId) {
-            log.warn(
-                "Relation service returned mismatched membership: tenantId={}, userId={}, responseTenantId={}, responseUserId={}",
-                tenantId,
-                userId,
-                response.tenant.id,
-                response.user.id,
+            log.structuredWarn(
+                "Relation service returned mismatched membership",
+                "event" to "relation_membership_response_invalid",
+                "tenant_id" to tenantId,
+                "subject" to userId,
+                "response_tenant_id" to response.tenant.id,
+                "response_subject" to response.user.id,
+                "failure_reason" to "relation_response_invalid",
             )
             throw RelationLookupException("relation_response_invalid")
         }
@@ -52,37 +57,81 @@ class HttpRelationService(
                 EventMembership(it.id, parseRole(it.role))
             }
         } catch (ex: ResourceValidationException) {
-            log.warn("Relation service returned invalid event id: tenantId={}, userId={}", tenantId, userId, ex)
+            log.structuredWarn(
+                "Relation service returned invalid event id",
+                ex,
+                "event" to "relation_membership_response_invalid",
+                "tenant_id" to tenantId,
+                "subject" to userId,
+                "failure_reason" to "relation_response_invalid",
+            )
             throw RelationLookupException("relation_response_invalid")
         }
-        log.debug(
-            "Relation membership lookup completed: tenantId={}, userId={}, tenantRole={}, eventCount={}",
-            tenantId,
-            userId,
-            tenantRole,
-            events.size,
+        log.structuredDebug(
+            "Relation membership HTTP lookup completed",
+            "event" to "relation_membership_http_lookup_completed",
+            "tenant_id" to tenantId,
+            "subject" to userId,
+            "tenant_role" to tenantRole,
+            "event_count" to events.size,
         )
-        log.trace("getMembership completed: tenantId={}, userId={}, eventCount={}", tenantId, userId, events.size)
+        log.structuredTrace(
+            "Relation membership HTTP lookup completed",
+            "event" to "relation_membership_http_lookup_completed",
+            "tenant_id" to tenantId,
+            "subject" to userId,
+            "event_count" to events.size,
+        )
         return TenantMembership(tenantId, tenantRole, events)
     }
 
     private inline fun <reified T : Any> getOrNull(path: String, vararg variables: String): T? {
         return try {
-            log.debug("Relation API request started: path={}, variableCount={}", path, variables.size)
+            log.structuredDebug(
+                "Relation API request started",
+                "event" to "relation_api_request_started",
+                "path" to path,
+                "variable_count" to variables.size,
+            )
             restClient.get()
                 .uri(path, *variables)
                 .retrieve()
                 .onStatus({ it == HttpStatus.NOT_FOUND }) { _, _ -> throw RelationLookupException("tenant_not_found") }
                 .body(T::class.java)
-                .also { log.debug("Relation API request completed: path={}, responsePresent={}", path, it != null) }
+                .also {
+                    log.structuredDebug(
+                        "Relation API request completed",
+                        "event" to "relation_api_request_completed",
+                        "path" to path,
+                        "response_present" to (it != null),
+                        "result" to "success",
+                    )
+                }
         } catch (ex: RelationLookupException) {
-            log.debug("Relation API request returned a known lookup failure: path={}, reason={}", path, ex.reason)
+            log.structuredDebug(
+                "Relation API request returned known lookup failure",
+                "event" to "relation_api_request_failed",
+                "path" to path,
+                "failure_reason" to ex.reason,
+            )
             throw ex
         } catch (ex: RestClientException) {
-            log.warn("Relation API request failed: path={}", path, ex)
+            log.structuredWarn(
+                "Relation API request failed",
+                ex,
+                "event" to "relation_api_request_failed",
+                "path" to path,
+                "failure_reason" to "relation_lookup_failed",
+            )
             throw RelationLookupException("relation_lookup_failed")
         } catch (ex: RuntimeException) {
-            log.warn("Relation API response handling failed: path={}", path, ex)
+            log.structuredWarn(
+                "Relation API response handling failed",
+                ex,
+                "event" to "relation_api_response_invalid",
+                "path" to path,
+                "failure_reason" to "relation_response_invalid",
+            )
             throw RelationLookupException("relation_response_invalid")
         }
     }
@@ -91,7 +140,13 @@ class HttpRelationService(
         return try {
             RelationRole.fromExternal(value)
         } catch (ex: UnknownRelationRoleException) {
-            log.warn("Relation service returned unknown role: role={}", value, ex)
+            log.structuredWarn(
+                "Relation service returned unknown role",
+                ex,
+                "event" to "relation_role_unknown",
+                "relation_role" to value,
+                "failure_reason" to "relation_role_unknown",
+            )
             throw RelationLookupException("relation_role_unknown")
         }
     }

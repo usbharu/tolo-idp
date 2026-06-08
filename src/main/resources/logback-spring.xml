@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <property name="projectId" value="${projectId:-${SPRING_CLOUD_GCP_LOGGING_PROJECT_ID}}"/>
+
+    <appender name="CONSOLE_JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
+            <layout class="com.google.cloud.spring.logging.StackdriverJsonLayout">
+                <projectId>${projectId}</projectId>
+                <loggingEventEnhancer>dev.usbharu.toloidp.logging.KeyValueLoggingEventEnhancer</loggingEventEnhancer>
+            </layout>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE_JSON"/>
+    </root>
+</configuration>
