@@ -1,0 +1,10 @@
+# Copy this file to .envrc.local and run `direnv allow`.
+#
+# The prod compose file requires these values:
+#   docker compose -f docker-compose.prod.yaml up
+
+export TOLO_IDP_POSTGRES_USER=tolo_idp
+export TOLO_IDP_POSTGRES_PASSWORD=change-me
+export TOLO_IDP_ISSUER=https://auth.example.com
+export TOLO_IDP_JWK_PRIVATE_KEY_LOCATION=/run/secrets/tolo-idp-jwk.pem
+export TOLO_IDP_JWK_PRIVATE_KEY_HOST_PATH=$PWD/secrets/tolo-idp-jwk.pem
