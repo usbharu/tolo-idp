@@ -11,6 +11,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delet
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.x509
 import java.math.BigInteger
+import java.net.URI
 import java.security.Principal
 import java.security.PublicKey
 import java.security.cert.X509Certificate
@@ -74,6 +75,34 @@ class RelationCacheControllerSecurityTests(
 
         kotlin.test.assertNull(cachedMembership("tenant-a", "user-1"))
         kotlin.test.assertEquals(sampleMembership("tenant-a"), cachedMembership("tenant-a", "user-2"))
+    }
+
+    @Test
+    fun invalidTenantIdIsRejectedAndDoesNotPurgeEntries() {
+        cacheMembership("tenant-a", "user-1", sampleMembership("tenant-a"))
+
+        mockMvc.perform(
+            delete("/internal/relation-cache/tenants/%20tenant-a/users/user-1")
+                .with(x509(adminCertificate)),
+        )
+            .andExpect(status().isBadRequest)
+
+        kotlin.test.assertEquals(sampleMembership("tenant-a"), cachedMembership("tenant-a", "user-1"))
+    }
+
+    @Test
+    fun purgeOneUsesUserIdWithoutTrimming() {
+        cacheMembership("tenant-a", " user-1", sampleMembership("tenant-a"))
+        cacheMembership("tenant-a", "user-1", sampleMembership("tenant-a"))
+
+        mockMvc.perform(
+            delete(URI.create("/internal/relation-cache/tenants/tenant-a/users/%20user-1"))
+                .with(x509(adminCertificate)),
+        )
+            .andExpect(status().isNoContent)
+
+        kotlin.test.assertNull(cachedMembership("tenant-a", " user-1"))
+        kotlin.test.assertEquals(sampleMembership("tenant-a"), cachedMembership("tenant-a", "user-1"))
     }
 
     private fun cacheMembership(tenantId: String, userId: String, membership: TenantMembership) {

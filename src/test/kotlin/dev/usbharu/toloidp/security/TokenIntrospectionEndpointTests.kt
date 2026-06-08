@@ -177,6 +177,8 @@ class TokenIntrospectionEndpointTests(
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_request"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+            .andExpect(content().string(not(containsString("secret"))))
 
         mockMvc.perform(
             post("/oauth2/introspect")
@@ -186,6 +188,8 @@ class TokenIntrospectionEndpointTests(
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_request"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+            .andExpect(content().string(not(containsString("secret"))))
 
         mockMvc.perform(
             post("/oauth2/introspect")
@@ -195,6 +199,25 @@ class TokenIntrospectionEndpointTests(
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_request"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+            .andExpect(content().string(not(containsString("one"))))
+            .andExpect(content().string(not(containsString("two"))))
+            .andExpect(content().string(not(containsString("secret"))))
+    }
+
+    @Test
+    fun invalidTokenTypeHintParametersAreRejectedWithoutLeakingInputs() {
+        val tokenValue = "hint-token-${UUID.randomUUID()}"
+
+        mockMvc.perform(
+            introspectionRequest("client-123", "secret", tokenValue)
+                .param("token_type_hint", "access_token", "refresh_token"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+            .andExpect(content().string(not(containsString(tokenValue))))
+            .andExpect(content().string(not(containsString("secret"))))
     }
 
     private fun introspectionRequest(clientId: String, clientSecret: String, tokenValue: String) =

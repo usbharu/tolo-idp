@@ -2,12 +2,15 @@ package dev.usbharu.toloidp.relation
 
 import dev.usbharu.toloidp.logging.structuredInfo
 import dev.usbharu.toloidp.resource.ResourceParser
+import dev.usbharu.toloidp.resource.ResourceValidationException
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.server.ResponseStatusException
 
 @RestController
 @RequestMapping("/internal/relation-cache")
@@ -40,7 +43,11 @@ class RelationCacheController(
         @PathVariable tenantId: String,
         @PathVariable userId: String,
     ): ResponseEntity<Void> {
-        resourceParser.requireValidId(tenantId)
+        try {
+            resourceParser.requireValidId(tenantId)
+        } catch (ex: ResourceValidationException) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, null, ex)
+        }
         log.structuredInfo(
             "Relation membership cache purge started",
             "event" to "relation_membership_cache_purge_started",

@@ -64,6 +64,7 @@ class TokenExchangeEndpointTests(
         auditLogRepository.deleteAll()
         jtiDenylistRepository.deleteAll()
         cacheRepository.deleteAll()
+        replaceClient123Policy()
         ensurePublicPolicyClient()
         cacheRepository.save(
             RelationMembershipCache(
@@ -244,6 +245,56 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
+    fun rejectsMultipleSubjectTokenAndSubjectTokenTypeAsInvalidRequest() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken).param("subject_token", "second-token"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken).param("subject_token_type", JWT_TOKEN_TYPE))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+    }
+
+    @Test
+    fun rejectsActorTokenParameterMismatchesAsInvalidRequest() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken).param("actor_token", "actor-token"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken).param("actor_token_type", ACCESS_TOKEN_TYPE))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+    }
+
+    @Test
+    fun rejectsUnsupportedRequestedTokenTypeAsInvalidRequest() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken).param("requested_token_type", "urn:example:unsupported"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+    }
+
+    @Test
+    fun rejectsMultipleScopeParametersAsInvalidRequest() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken).param("scope", "events.write"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+    }
+
+    @Test
     fun rejectsScopeNotAllowedForClientAsInvalidScope() {
         val subjectToken = saveTenantAuthorization()
 
@@ -280,6 +331,32 @@ class TokenExchangeEndpointTests(
             .andExpect(jsonPath("$.error").value("invalid_scope"))
 
         assertEquals("scope_not_allowed_for_role", latestAudit()["failure_reason"])
+    }
+
+    @Test
+    fun rejectsClientPolicyWithoutTokenExchangeGrant() {
+        val subjectToken = saveTenantAuthorization()
+        replaceClient123Policy(allowedGrantTypes = setOf(AuthorizationGrantType.AUTHORIZATION_CODE.value))
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        assertEquals("invalid_token_use_transition", latestAudit()["failure_reason"])
+    }
+
+    @Test
+    fun rejectsClientPolicyWithoutTenantToEventTransition() {
+        val subjectToken = saveTenantAuthorization()
+        replaceClient123Policy(allowedTransitions = emptySet())
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        assertEquals("invalid_token_use_transition", latestAudit()["failure_reason"])
     }
 
     @Test
@@ -456,6 +533,28 @@ class TokenExchangeEndpointTests(
                     "issued_jti" to it.issuedJti,
                 )
             }
+
+    private fun replaceClient123Policy(
+        clientType: ClientType = ClientType.CONFIDENTIAL,
+        allowedGrantTypes: Set<String> = setOf(AuthorizationGrantType.TOKEN_EXCHANGE.value),
+        allowedTransitions: Set<String> = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),
+        allowedAudiences: Set<String> = setOf("backend-api"),
+        allowedScopes: Set<String> = setOf("tenant.read", "events.read", "events.write"),
+    ) {
+        clientPolicyRepository.deleteById("client-123")
+        clientPolicyRepository.save(
+            ClientPolicy(
+                clientId = "client-123",
+                clientType = clientType,
+                allowedGrantTypes = allowedGrantTypes,
+                allowedTransitions = allowedTransitions,
+                allowedAudiences = allowedAudiences,
+                allowedScopes = allowedScopes,
+                tenantAccessTtl = java.time.Duration.ofSeconds(900),
+                eventAccessTtl = java.time.Duration.ofSeconds(600),
+            ),
+        )
+    }
 
     private fun ensurePublicPolicyClient() {
         if (registeredClientRepository.findByClientId(PUBLIC_POLICY_CLIENT_ID) == null) {

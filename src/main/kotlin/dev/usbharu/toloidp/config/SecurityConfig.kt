@@ -217,6 +217,7 @@ class SecurityConfig {
                 }
             }
                 .tokenIntrospectionEndpoint { introspectionEndpoint ->
+                    introspectionEndpoint.errorResponseHandler(oauth2CodeOnlyErrorResponseHandler())
                     introspectionEndpoint.introspectionResponseHandler(tokenIntrospectionResponseHandler())
                 }
         }
@@ -251,12 +252,9 @@ class SecurityConfig {
         JdbcRegisteredClientRepository(jdbcTemplate)
 
     private fun tokenEndpointErrorResponseHandler(): AuthenticationFailureHandler {
-        val converter: HttpMessageConverter<OAuth2Error> = OAuth2ErrorHttpMessageConverter()
         return AuthenticationFailureHandler { _, response, exception ->
             val error = tokenEndpointError(exception)
-            val httpResponse = ServletServerHttpResponse(response)
-            httpResponse.setStatusCode(HttpStatus.BAD_REQUEST)
-            converter.write(error, null, httpResponse)
+            writeOAuth2Error(response, error)
         }
     }
 
@@ -266,11 +264,32 @@ class SecurityConfig {
             exception.error.description?.contains(OAuth2ParameterNames.RESOURCE) == true
         ) {
             OAuth2Error("invalid_target")
+        } else if (exception is OAuth2AuthenticationException &&
+            exception.error.errorCode == OAuth2ErrorCodes.UNSUPPORTED_TOKEN_TYPE
+        ) {
+            OAuth2Error(OAuth2ErrorCodes.INVALID_REQUEST)
         } else if (exception is OAuth2AuthenticationException) {
-            exception.error
+            OAuth2Error(exception.error.errorCode)
         } else {
             OAuth2Error(OAuth2ErrorCodes.INVALID_REQUEST)
         }
+
+    private fun oauth2CodeOnlyErrorResponseHandler(): AuthenticationFailureHandler =
+        AuthenticationFailureHandler { _, response, exception ->
+            val error = if (exception is OAuth2AuthenticationException) {
+                OAuth2Error(exception.error.errorCode)
+            } else {
+                OAuth2Error(OAuth2ErrorCodes.INVALID_REQUEST)
+            }
+            writeOAuth2Error(response, error)
+        }
+
+    private fun writeOAuth2Error(response: jakarta.servlet.http.HttpServletResponse, error: OAuth2Error) {
+        val converter: HttpMessageConverter<OAuth2Error> = OAuth2ErrorHttpMessageConverter()
+        val httpResponse = ServletServerHttpResponse(response)
+        httpResponse.setStatusCode(HttpStatus.BAD_REQUEST)
+        converter.write(error, null, httpResponse)
+    }
 
     private fun tokenIntrospectionResponseHandler(): AuthenticationSuccessHandler {
         val converter = OAuth2TokenIntrospectionHttpMessageConverter()
