@@ -12,6 +12,7 @@ data class IdpProperties(
     val token: Token = Token(),
     val seed: Seed = Seed(),
     val jwk: Jwk = Jwk(),
+    val rateLimit: RateLimit = RateLimit(),
 ) {
     data class Resource(
         val allowedHosts: Set<String> = setOf("api.example.com"),
@@ -46,4 +47,22 @@ data class IdpProperties(
         val keyId: String? = null,
         val allowEphemeral: Boolean = false,
     )
+
+    data class RateLimit(
+        val enabled: Boolean = true,
+        val redis: Redis = Redis(),
+        val ip: Limit = Limit(capacity = 60, refillPeriod = Duration.ofMinutes(1)),
+        val user: Limit = Limit(capacity = 30, refillPeriod = Duration.ofMinutes(1)),
+        val ipUser: Limit = Limit(capacity = 20, refillPeriod = Duration.ofMinutes(1)),
+    ) {
+        data class Redis(
+            val uri: String? = null,
+            val keyPrefix: String = "tolo-idp:rate-limit",
+        )
+
+        data class Limit(
+            val capacity: Long,
+            val refillPeriod: Duration,
+        )
+    }
 }

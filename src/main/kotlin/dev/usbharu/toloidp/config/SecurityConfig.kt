@@ -9,6 +9,7 @@ import dev.usbharu.toloidp.audit.AuditService
 import dev.usbharu.toloidp.client.ClientPolicyRepository
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
+import dev.usbharu.toloidp.ratelimit.RateLimitFilter
 import dev.usbharu.toloidp.scope.ScopePolicy
 import dev.usbharu.toloidp.security.JtiDenylistRepository
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
@@ -16,6 +17,7 @@ import dev.usbharu.toloidp.security.TenantAuthorizationValidator
 import dev.usbharu.toloidp.security.TenantAwareAuthorizationRequestConverter
 import dev.usbharu.toloidp.security.ToloJwtCustomizer
 import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
@@ -66,6 +68,7 @@ import org.springframework.security.web.authentication.AuthenticationFailureHand
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken
+import org.springframework.security.web.context.SecurityContextHolderFilter
 import javax.sql.DataSource
 import java.time.Clock
 import java.security.KeyFactory
@@ -87,6 +90,7 @@ class SecurityConfig {
     fun relationCacheSecurityFilterChain(
         http: HttpSecurity,
         properties: IdpProperties,
+        rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
         http.securityMatcher("/internal/relation-cache/**")
             .authorizeHttpRequests {
@@ -110,12 +114,16 @@ class SecurityConfig {
             .exceptionHandling {
                 it.authenticationEntryPoint(HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
             }
+        addRateLimitFilter(http, rateLimitFilter)
         return http.build()
     }
 
     @Bean
     @Order(1)
-    fun disabledRevocationSecurityFilterChain(http: HttpSecurity): SecurityFilterChain {
+    fun disabledRevocationSecurityFilterChain(
+        http: HttpSecurity,
+        rateLimitFilter: ObjectProvider<RateLimitFilter>,
+    ): SecurityFilterChain {
         http.securityMatcher("/oauth2/revoke")
             .authorizeHttpRequests {
                 it.anyRequest().denyAll()
@@ -129,6 +137,7 @@ class SecurityConfig {
                     response.sendError(HttpStatus.NOT_FOUND.value())
                 }
             }
+        addRateLimitFilter(http, rateLimitFilter)
         return http.build()
     }
 
@@ -148,6 +157,7 @@ class SecurityConfig {
         auditService: AuditService,
         clock: Clock,
         settings: AuthorizationServerSettings,
+        rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
         val authorizationServerConfigurer = OAuth2AuthorizationServerConfigurer()
         http.with(authorizationServerConfigurer) { authorizationServer ->
@@ -228,12 +238,16 @@ class SecurityConfig {
                 it.authenticationEntryPoint(HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
             }
             .formLogin { it.disable() }
+        addRateLimitFilter(http, rateLimitFilter)
         return http.build()
     }
 
     @Bean
     @Order(3)
-    fun applicationSecurityFilterChain(http: HttpSecurity): SecurityFilterChain {
+    fun applicationSecurityFilterChain(
+        http: HttpSecurity,
+        rateLimitFilter: ObjectProvider<RateLimitFilter>,
+    ): SecurityFilterChain {
         http.authorizeHttpRequests {
             it.requestMatchers("/actuator/health", "/api/login").permitAll()
                 .anyRequest().authenticated()
@@ -244,6 +258,7 @@ class SecurityConfig {
             .formLogin { it.disable() }
             .logout { it.disable() }
             .csrf { it.disable() }
+        addRateLimitFilter(http, rateLimitFilter)
         return http.build()
     }
 
@@ -299,6 +314,15 @@ class SecurityConfig {
                 .filterKeys { it in INTROSPECTION_RESPONSE_CLAIMS }
             val filtered = OAuth2TokenIntrospection.withClaims(filteredClaims).build()
             converter.write(filtered, null, ServletServerHttpResponse(response))
+        }
+    }
+
+    private fun addRateLimitFilter(
+        http: HttpSecurity,
+        rateLimitFilter: ObjectProvider<RateLimitFilter>,
+    ) {
+        rateLimitFilter.ifAvailable {
+            http.addFilterAfter(it, SecurityContextHolderFilter::class.java)
         }
     }
 
