@@ -24,6 +24,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration
 import org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization.OAuth2AuthorizationServerConfigurer
+import org.springframework.security.access.hierarchicalroles.RoleHierarchy
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.crypto.password.PasswordEncoder
@@ -257,6 +258,10 @@ class SecurityConfig {
     @Bean
     fun passwordEncoder(): PasswordEncoder =
         PasswordEncoderFactories.createDelegatingPasswordEncoder()
+
+    @Bean
+    fun roleHierarchy(): RoleHierarchy =
+        ScopePolicy.defaultRoleHierarchy()
 
     @Bean
     fun jwkSource(properties: IdpProperties): JWKSource<SecurityContext> {
