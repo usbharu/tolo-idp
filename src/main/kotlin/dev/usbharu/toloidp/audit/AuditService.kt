@@ -46,7 +46,7 @@ class AuditService(
     }
 }
 
-@Table("IDP_AUDIT_LOG")
+@Table("idp_audit_log")
 data class AuditLogRecord(
     @Id
     val id: Long? = null,

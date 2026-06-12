@@ -13,11 +13,11 @@ data class RelationMembershipCacheId(
     val userId: String,
 )
 
-@Table("IDP_RELATION_MEMBERSHIP_CACHE")
+@Table("idp_relation_membership_cache")
 data class RelationMembershipCache(
     @Id
     val cacheId: RelationMembershipCacheId,
-    @Column("PAYLOAD")
+    @Column("payload")
     val membership: TenantMembership,
     val cachedAt: Instant,
     val expiresAt: Instant,

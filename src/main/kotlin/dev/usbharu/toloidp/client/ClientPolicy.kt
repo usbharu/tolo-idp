@@ -8,19 +8,19 @@ import org.springframework.data.relational.core.mapping.Table
 import org.springframework.data.repository.CrudRepository
 import java.time.Duration
 
-@Table("IDP_CLIENT_POLICY")
+@Table("idp_client_policy")
 data class ClientPolicy(
     @Id
     val clientId: String,
     val clientType: ClientType,
     val allowedGrantTypes: Set<String>,
-    @Column("ALLOWED_TOKEN_EXCHANGE_TRANSITIONS")
+    @Column("allowed_token_exchange_transitions")
     val allowedTransitions: Set<String>,
     val allowedAudiences: Set<String>,
     val allowedScopes: Set<String>,
-    @Column("TENANT_ACCESS_TTL_SECONDS")
+    @Column("tenant_access_ttl_seconds")
     val tenantAccessTtl: Duration,
-    @Column("EVENT_ACCESS_TTL_SECONDS")
+    @Column("event_access_ttl_seconds")
     val eventAccessTtl: Duration,
 ) : Persistable<String> {
     @Transient

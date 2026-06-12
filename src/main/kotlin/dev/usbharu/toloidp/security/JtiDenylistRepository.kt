@@ -7,7 +7,7 @@ import org.springframework.data.relational.core.mapping.Table
 import org.springframework.data.repository.CrudRepository
 import java.time.Instant
 
-@Table("IDP_JTI_DENYLIST")
+@Table("idp_jti_denylist")
 data class JtiDenylistEntry(
     @Id
     val jti: String,
