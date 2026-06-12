@@ -33,6 +33,7 @@ import org.springframework.security.core.AuthenticationException
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.jackson.SecurityJacksonModules
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException
@@ -69,6 +70,9 @@ import org.springframework.security.web.authentication.AuthenticationSuccessHand
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken
 import org.springframework.security.web.context.SecurityContextHolderFilter
+import tools.jackson.databind.JacksonModule
+import tools.jackson.databind.json.JsonMapper
+import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator
 import javax.sql.DataSource
 import java.time.Clock
 import java.security.KeyFactory
@@ -263,8 +267,29 @@ class SecurityConfig {
     }
 
     @Bean
-    fun registeredClientRepository(jdbcTemplate: JdbcTemplate): RegisteredClientRepository =
-        JdbcRegisteredClientRepository(jdbcTemplate)
+    fun registeredClientRepository(jdbcTemplate: JdbcTemplate): RegisteredClientRepository {
+        val jsonMapper = registeredClientJsonMapper()
+        return JdbcRegisteredClientRepository(jdbcTemplate).apply {
+            setRegisteredClientRowMapper(
+                JdbcRegisteredClientRepository.JsonMapperRegisteredClientRowMapper(jsonMapper),
+            )
+            setRegisteredClientParametersMapper(
+                JdbcRegisteredClientRepository.JsonMapperRegisteredClientParametersMapper(jsonMapper),
+            )
+        }
+    }
+
+    private fun registeredClientJsonMapper(): JsonMapper {
+        val typeValidatorBuilder = BasicPolymorphicTypeValidator.builder()
+            .allowIfSubType("java.util.")
+            .allowIfSubType("java.time.")
+            .allowIfSubType("org.springframework.security.oauth2.")
+        val securityModules: List<JacksonModule> =
+            SecurityJacksonModules.getModules(SecurityConfig::class.java.classLoader, typeValidatorBuilder)
+        return JsonMapper.builder()
+            .addModules(securityModules)
+            .build()
+    }
 
     private fun tokenEndpointErrorResponseHandler(): AuthenticationFailureHandler {
         return AuthenticationFailureHandler { _, response, exception ->
