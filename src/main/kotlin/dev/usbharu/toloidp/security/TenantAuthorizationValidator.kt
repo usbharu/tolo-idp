@@ -10,6 +10,7 @@ import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.ScopeNotAllowedException
 import dev.usbharu.toloidp.scope.ScopePolicy
 import org.slf4j.LoggerFactory
+import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.OAuth2Error
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
@@ -41,6 +42,9 @@ class TenantAuthorizationValidator(
             "allowed_audience_count" to policy.allowedAudiences.size,
             "allowed_scope_count" to policy.allowedScopes.size,
         )
+        if (AuthorizationGrantType.AUTHORIZATION_CODE.value !in policy.allowedGrantTypes) {
+            throwAuthorizationError(OAuth2ErrorCodes.UNAUTHORIZED_CLIENT, "client_id")
+        }
 
         val resource = authentication.additionalParameters[OAuth2ParameterNames.RESOURCE] as? String
             ?: throwAuthorizationError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.RESOURCE)

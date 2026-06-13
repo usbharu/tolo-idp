@@ -50,6 +50,9 @@ class ToloJwtCustomizer(
         )
         val policy = clientPolicyRepository.findByClientId(clientId)
             ?: throw OAuth2AuthenticationException("invalid_request")
+        if (AuthorizationGrantType.AUTHORIZATION_CODE.value !in policy.allowedGrantTypes) {
+            throw OAuth2AuthenticationException(OAuth2Error("unauthorized_client"))
+        }
         log.structuredDebug(
             "Tenant access client policy loaded",
             "event" to "tenant_access_client_policy_loaded",

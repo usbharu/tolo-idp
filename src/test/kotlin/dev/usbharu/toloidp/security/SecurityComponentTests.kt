@@ -1,6 +1,8 @@
 package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.ClientPolicy
+import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.relation.EventMembership
 import dev.usbharu.toloidp.relation.RelationMembershipCache
 import dev.usbharu.toloidp.relation.RelationMembershipCacheId
@@ -38,6 +40,7 @@ import org.springframework.security.oauth2.server.authorization.context.Authoriz
 import org.springframework.security.oauth2.server.authorization.context.AuthorizationServerContextHolder
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext
+import java.time.Duration
 import java.time.Instant
 import kotlin.test.AfterTest
 import kotlin.test.assertEquals
@@ -66,6 +69,7 @@ class SecurityComponentTests(
     fun setUp() {
         registeredClient = registeredClientRepository.findByClientId("client-123")
             ?: error("seed client-123 is required")
+        replaceClientPolicy()
         AuthorizationServerContextHolder.setContext(
             object : AuthorizationServerContext {
                 private val settings = AuthorizationServerSettings.builder().issuer("http://localhost:8080").build()
@@ -123,6 +127,18 @@ class SecurityComponentTests(
         val validator = TenantAuthorizationValidator(clientPolicyRepository, resourceParser, relationService, scopePolicy)
 
         validator.accept(authorizationContext(scopes = setOf("tenant.read", "events.read")))
+    }
+
+    @Test
+    fun tenantAuthorizationValidatorRejectsClientPolicyWithoutAuthorizationCodeGrant() {
+        replaceClientPolicy(allowedGrantTypes = setOf(AuthorizationGrantType.TOKEN_EXCHANGE.value))
+        val validator = TenantAuthorizationValidator(clientPolicyRepository, resourceParser, relationService, scopePolicy)
+
+        val exception = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
+            validator.accept(authorizationContext(scopes = setOf("tenant.read")))
+        }
+
+        assertEquals("unauthorized_client", exception.error.errorCode)
     }
 
     @Test
@@ -261,6 +277,32 @@ class SecurityComponentTests(
     }
 
     @Test
+    fun jwtCustomizerRejectsTenantAccessWhenPolicyOmitsAuthorizationCodeGrant() {
+        replaceClientPolicy(allowedGrantTypes = setOf(AuthorizationGrantType.TOKEN_EXCHANGE.value))
+        val context = jwtContext(
+            grantType = AuthorizationGrantType.AUTHORIZATION_CODE,
+            scopes = setOf("tenant.read"),
+            authorization = OAuth2Authorization.withRegisteredClient(registeredClient)
+                .principalName("user-123")
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .attribute(
+                    OAuth2AuthorizationRequest::class.java.name,
+                    oauthAuthorizationRequest(
+                        resource = "https://api.example.com/tenants/tenant-a",
+                        audience = "backend-api",
+                        scopes = setOf("tenant.read"),
+                    ),
+                )
+                .build(),
+        )
+
+        val exception = assertFailsWith<OAuth2AuthenticationException> {
+            jwtCustomizer.customize(context)
+        }
+        assertEquals("unauthorized_client", exception.error.errorCode)
+    }
+
+    @Test
     fun jwtCustomizerAddsEventAccessClaimsForTokenExchangeGrant() {
         val tokenExchange = OAuth2TokenExchangeAuthenticationToken(
             ACCESS_TOKEN_TYPE,
@@ -304,6 +346,27 @@ class SecurityComponentTests(
         jwtCustomizer.customize(context)
 
         assertFalse(context.claims.build().claims.containsKey("token_use"))
+    }
+
+    private fun replaceClientPolicy(
+        allowedGrantTypes: Set<String> = setOf(
+            AuthorizationGrantType.AUTHORIZATION_CODE.value,
+            AuthorizationGrantType.TOKEN_EXCHANGE.value,
+        ),
+    ) {
+        clientPolicyRepository.deleteById("client-123")
+        clientPolicyRepository.save(
+            ClientPolicy(
+                clientId = "client-123",
+                clientType = ClientType.CONFIDENTIAL,
+                allowedGrantTypes = allowedGrantTypes,
+                allowedTransitions = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),
+                allowedAudiences = setOf("backend-api"),
+                allowedScopes = setOf("tenant.read", "tenant.write", "events.read", "events.write"),
+                tenantAccessTtl = Duration.ofSeconds(900),
+                eventAccessTtl = Duration.ofSeconds(600),
+            ),
+        )
     }
 
     private fun authorizationRequest(): MockHttpServletRequest =
