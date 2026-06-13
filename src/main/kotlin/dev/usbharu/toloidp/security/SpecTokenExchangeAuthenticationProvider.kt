@@ -139,7 +139,8 @@ open class SpecTokenExchangeAuthenticationProvider(
             ) {
                 fail("invalid_grant", "subject_token_client_mismatch")
             }
-            val subject = claims["sub"] as? String ?: subjectAuthorization.principalName
+            val subject = claims["sub"] as? String
+                ?: fail("invalid_grant", "subject_token_invalid_claims")
             audit = audit.copy(
                 subject = subject,
                 sourceTokenUse = claims["token_use"] as? String,

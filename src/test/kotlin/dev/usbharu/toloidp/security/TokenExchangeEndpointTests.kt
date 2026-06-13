@@ -390,6 +390,18 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
+    fun rejectsSubjectTokenWithoutSubjectClaim() {
+        val subjectToken = saveTenantAuthorization(subject = null)
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        assertEquals("subject_token_invalid_claims", latestAudit()["failure_reason"])
+    }
+
+    @Test
     fun rejectsTenantMismatchAsInvalidGrant() {
         val subjectToken = saveTenantAuthorization(tenantId = "tenant-b")
 
@@ -498,6 +510,7 @@ class TokenExchangeEndpointTests(
 
     private fun saveTenantAuthorization(
         tokenUse: String = TOKEN_USE_TENANT_ACCESS,
+        subject: String? = "user-123",
         tenantId: String = "tenant-a",
         scopes: Set<String> = setOf("tenant.read", "events.read", "events.write"),
         jti: String = "jti-${UUID.randomUUID()}",
@@ -524,9 +537,8 @@ class TokenExchangeEndpointTests(
             .authorizedScopes(scopes)
             .attribute(Principal::class.java.name, authentication)
             .token(token) { metadata ->
-                metadata[OAuth2Authorization.Token.CLAIMS_METADATA_NAME] = mapOf(
+                val claims = linkedMapOf<String, Any>(
                     "iss" to "http://localhost:8080",
-                    "sub" to "user-123",
                     "aud" to listOf("backend-api"),
                     "client_id" to "client-123",
                     "scope" to scopes.joinToString(" "),
@@ -538,6 +550,10 @@ class TokenExchangeEndpointTests(
                     "exp" to now.plusSeconds(3600),
                     "jti" to jti,
                 )
+                if (subject != null) {
+                    claims["sub"] = subject
+                }
+                metadata[OAuth2Authorization.Token.CLAIMS_METADATA_NAME] = claims
             }
             .build()
         authorizationService.save(authorization)
