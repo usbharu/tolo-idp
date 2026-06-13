@@ -66,6 +66,7 @@ class TokenExchangeEndpointTests(
         cacheRepository.deleteAll()
         replaceClient123Policy()
         ensurePublicPolicyClient()
+        ensureOtherConfidentialClient()
         cacheRepository.save(
             RelationMembershipCache(
                 cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
@@ -138,6 +139,24 @@ class TokenExchangeEndpointTests(
             .andExpect(jsonPath("$.error").value("invalid_grant"))
 
         assertEquals("client_not_allowed", latestAudit()["failure_reason"])
+    }
+
+    @Test
+    fun rejectsSubjectTokenIssuedToDifferentClient() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(
+            tokenExchangeRequest(
+                subjectToken = subjectToken,
+                clientId = OTHER_CONFIDENTIAL_CLIENT_ID,
+                clientSecret = OTHER_CONFIDENTIAL_CLIENT_SECRET,
+            ),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        assertEquals("subject_token_client_mismatch", latestAudit()["failure_reason"])
     }
 
     @Test
@@ -596,8 +615,38 @@ class TokenExchangeEndpointTests(
         )
     }
 
+    private fun ensureOtherConfidentialClient() {
+        if (registeredClientRepository.findByClientId(OTHER_CONFIDENTIAL_CLIENT_ID) == null) {
+            registeredClientRepository.save(
+                RegisteredClient.withId(UUID.randomUUID().toString())
+                    .clientId(OTHER_CONFIDENTIAL_CLIENT_ID)
+                    .clientSecret(passwordEncoder.encode(OTHER_CONFIDENTIAL_CLIENT_SECRET))
+                    .clientName("Other confidential token exchange test client")
+                    .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                    .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
+                    .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
+                    .build(),
+            )
+        }
+        clientPolicyRepository.deleteById(OTHER_CONFIDENTIAL_CLIENT_ID)
+        clientPolicyRepository.save(
+            ClientPolicy(
+                clientId = OTHER_CONFIDENTIAL_CLIENT_ID,
+                clientType = ClientType.CONFIDENTIAL,
+                allowedGrantTypes = setOf(AuthorizationGrantType.TOKEN_EXCHANGE.value),
+                allowedTransitions = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),
+                allowedAudiences = setOf("backend-api"),
+                allowedScopes = setOf("tenant.read", "events.read", "events.write"),
+                tenantAccessTtl = java.time.Duration.ofSeconds(900),
+                eventAccessTtl = java.time.Duration.ofSeconds(600),
+            ),
+        )
+    }
+
     private companion object {
         const val PUBLIC_POLICY_CLIENT_ID = "public-token-exchange-client"
         const val PUBLIC_POLICY_CLIENT_SECRET = "public-secret"
+        const val OTHER_CONFIDENTIAL_CLIENT_ID = "other-token-exchange-client"
+        const val OTHER_CONFIDENTIAL_CLIENT_SECRET = "other-secret"
     }
 }

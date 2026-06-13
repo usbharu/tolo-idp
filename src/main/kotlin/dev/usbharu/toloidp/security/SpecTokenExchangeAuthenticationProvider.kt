@@ -134,6 +134,11 @@ open class SpecTokenExchangeAuthenticationProvider(
             if (!subjectToken.isActive || denied) {
                 fail("invalid_grant", "token_revoked")
             }
+            if (subjectAuthorization.registeredClientId != registeredClient.id ||
+                claims["client_id"] != registeredClient.clientId
+            ) {
+                fail("invalid_grant", "subject_token_client_mismatch")
+            }
             val subject = claims["sub"] as? String ?: subjectAuthorization.principalName
             audit = audit.copy(
                 subject = subject,
