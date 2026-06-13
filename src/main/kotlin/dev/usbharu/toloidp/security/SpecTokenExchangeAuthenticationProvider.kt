@@ -122,7 +122,9 @@ open class SpecTokenExchangeAuthenticationProvider(
             val subjectToken = subjectAuthorization.getToken<OAuth2Token>(tokenExchange.subjectToken)
                 ?: fail("invalid_grant", "token_revoked")
             val claims = subjectToken.claims ?: fail("invalid_grant", "token_revoked")
-            val denied = isDenied(claims["jti"] as? String)
+            val subjectJti = claims["jti"] as? String
+                ?: fail("invalid_grant", "subject_token_invalid_claims")
+            val denied = isDenied(subjectJti)
             log.structuredDebug(
                 "Subject token status checked",
                 "event" to "subject_token_status_checked",

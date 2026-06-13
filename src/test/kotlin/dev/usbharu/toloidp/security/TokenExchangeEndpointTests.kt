@@ -428,6 +428,18 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
+    fun rejectsSubjectTokenWithoutJtiClaim() {
+        val subjectToken = saveTenantAuthorization(jti = null)
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        assertEquals("subject_token_invalid_claims", latestAudit()["failure_reason"])
+    }
+
+    @Test
     fun rejectsMissingEventMembershipAsInvalidGrantWithoutLeakingDetailsInErrorCode() {
         val subjectToken = saveTenantAuthorization()
 
@@ -513,7 +525,7 @@ class TokenExchangeEndpointTests(
         subject: String? = "user-123",
         tenantId: String = "tenant-a",
         scopes: Set<String> = setOf("tenant.read", "events.read", "events.write"),
-        jti: String = "jti-${UUID.randomUUID()}",
+        jti: String? = "jti-${UUID.randomUUID()}",
     ): String {
         val tokenValue = "subject-token-${UUID.randomUUID()}"
         val registeredClient = registeredClientRepository.findByClientId("client-123")
@@ -548,10 +560,12 @@ class TokenExchangeEndpointTests(
                     "iat" to now.minusSeconds(60),
                     "nbf" to now.minusSeconds(60),
                     "exp" to now.plusSeconds(3600),
-                    "jti" to jti,
                 )
                 if (subject != null) {
                     claims["sub"] = subject
+                }
+                if (jti != null) {
+                    claims["jti"] = jti
                 }
                 metadata[OAuth2Authorization.Token.CLAIMS_METADATA_NAME] = claims
             }
