@@ -464,6 +464,30 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
+    fun rejectsSubjectTokenWithoutResourceClaim() {
+        val subjectToken = saveTenantAuthorization(subjectResource = null)
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        assertEquals("subject_token_invalid_claims", latestAudit()["failure_reason"])
+    }
+
+    @Test
+    fun rejectsSubjectTokenResourceTenantMismatch() {
+        val subjectToken = saveTenantAuthorization(subjectResource = "https://api.example.com/tenants/tenant-b")
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        assertEquals("subject_token_invalid_claims", latestAudit()["failure_reason"])
+    }
+
+    @Test
     fun rejectsMissingEventMembershipAsInvalidGrantWithoutLeakingDetailsInErrorCode() {
         val subjectToken = saveTenantAuthorization()
 
@@ -549,6 +573,7 @@ class TokenExchangeEndpointTests(
         subject: String? = "user-123",
         subjectAudience: Any? = listOf("backend-api"),
         tenantId: String = "tenant-a",
+        subjectResource: String? = "https://api.example.com/tenants/$tenantId",
         scopes: Set<String> = setOf("tenant.read", "events.read", "events.write"),
         jti: String? = "jti-${UUID.randomUUID()}",
     ): String {
@@ -579,7 +604,6 @@ class TokenExchangeEndpointTests(
                     "client_id" to "client-123",
                     "scope" to scopes.joinToString(" "),
                     "token_use" to tokenUse,
-                    "resource" to "https://api.example.com/tenants/$tenantId",
                     "tenant_id" to tenantId,
                     "iat" to now.minusSeconds(60),
                     "nbf" to now.minusSeconds(60),
@@ -590,6 +614,9 @@ class TokenExchangeEndpointTests(
                 }
                 if (subjectAudience != null) {
                     claims["aud"] = subjectAudience
+                }
+                if (subjectResource != null) {
+                    claims["resource"] = subjectResource
                 }
                 if (jti != null) {
                     claims["jti"] = jti

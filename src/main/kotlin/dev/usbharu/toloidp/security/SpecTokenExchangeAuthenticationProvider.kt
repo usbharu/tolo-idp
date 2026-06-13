@@ -157,7 +157,17 @@ open class SpecTokenExchangeAuthenticationProvider(
             if (claims["token_use"] != TOKEN_USE_TENANT_ACCESS) {
                 fail("invalid_grant", "invalid_token_use_transition")
             }
-            if (claims["tenant_id"] != eventResource.tenantId) {
+            val subjectTenantId = claims["tenant_id"] as? String
+                ?: fail("invalid_grant", "subject_token_invalid_claims")
+            val subjectResource = try {
+                resourceParser.parseTenant(claims["resource"] as? String ?: fail("invalid_grant", "subject_token_invalid_claims"))
+            } catch (ex: RuntimeException) {
+                fail("invalid_grant", "subject_token_invalid_claims")
+            }
+            if (subjectResource.tenantId != subjectTenantId) {
+                fail("invalid_grant", "subject_token_invalid_claims")
+            }
+            if (subjectTenantId != eventResource.tenantId) {
                 fail("invalid_grant", "event_not_in_tenant")
             }
             val subjectScopes = splitScope(claims["scope"])
