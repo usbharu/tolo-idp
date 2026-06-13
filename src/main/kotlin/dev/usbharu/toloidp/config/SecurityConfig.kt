@@ -18,6 +18,7 @@ import dev.usbharu.toloidp.security.TenantAwareAuthorizationRequestConverter
 import dev.usbharu.toloidp.security.ToloJwtCustomizer
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
@@ -62,6 +63,7 @@ import org.springframework.security.oauth2.server.authorization.token.Delegating
 import org.springframework.security.oauth2.server.authorization.token.JwtGenerator
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
 import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2AuthorizationCodeRequestAuthenticationConverter
+import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.provisioning.JdbcUserDetailsManager
 import org.springframework.security.provisioning.UserDetailsManager
 import org.springframework.security.web.SecurityFilterChain
@@ -157,9 +159,8 @@ class SecurityConfig {
         resourceParser: ResourceParser,
         relationService: RelationService,
         scopePolicy: ScopePolicy,
-        jtiDenylistRepository: JtiDenylistRepository,
-        auditService: AuditService,
-        clock: Clock,
+        @Qualifier("specTokenExchangeAuthenticationProvider")
+        specTokenExchangeAuthenticationProvider: AuthenticationProvider,
         settings: AuthorizationServerSettings,
         rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
@@ -215,19 +216,7 @@ class SecurityConfig {
                 tokenEndpoint.errorResponseHandler(tokenEndpointErrorResponseHandler())
                 tokenEndpoint.authenticationProviders { providers ->
                     providers.removeIf { it is OAuth2TokenExchangeAuthenticationProvider }
-                    providers.add(
-                        SpecTokenExchangeAuthenticationProvider(
-                            authorizationService,
-                            tokenGenerator,
-                            clientPolicyRepository,
-                            resourceParser,
-                            relationService,
-                            scopePolicy,
-                            jtiDenylistRepository,
-                            auditService,
-                            clock,
-                        ),
-                    )
+                    providers.add(specTokenExchangeAuthenticationProvider)
                 }
             }
                 .tokenIntrospectionEndpoint { introspectionEndpoint ->
@@ -364,6 +353,30 @@ class SecurityConfig {
         registeredClientRepository: RegisteredClientRepository,
     ): OAuth2AuthorizationConsentService =
         JdbcOAuth2AuthorizationConsentService(jdbcTemplate, registeredClientRepository)
+
+    @Bean
+    fun specTokenExchangeAuthenticationProvider(
+        authorizationService: OAuth2AuthorizationService,
+        tokenGenerator: OAuth2TokenGenerator<OAuth2Token>,
+        clientPolicyRepository: ClientPolicyRepository,
+        resourceParser: ResourceParser,
+        relationService: RelationService,
+        scopePolicy: ScopePolicy,
+        jtiDenylistRepository: JtiDenylistRepository,
+        auditService: AuditService,
+        clock: Clock,
+    ): AuthenticationProvider =
+        SpecTokenExchangeAuthenticationProvider(
+            authorizationService,
+            tokenGenerator,
+            clientPolicyRepository,
+            resourceParser,
+            relationService,
+            scopePolicy,
+            jtiDenylistRepository,
+            auditService,
+            clock,
+        )
 
     @Bean
     fun authorizationServerSettings(properties: IdpProperties): AuthorizationServerSettings =

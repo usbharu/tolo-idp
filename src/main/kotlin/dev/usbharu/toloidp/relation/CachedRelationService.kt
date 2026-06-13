@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Primary
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 import java.time.Instant
 
@@ -21,6 +22,7 @@ class CachedRelationService(
     private val resourceParser: ResourceParser,
     private val clock: Clock,
 ) : RelationService {
+    @Transactional
     override fun getMembership(tenantId: String, userId: String): TenantMembership {
         log.structuredTrace("Relation membership lookup started", "event" to "relation_membership_lookup_started", "tenant_id" to tenantId, "subject" to userId)
         resourceParser.requireValidId(tenantId)

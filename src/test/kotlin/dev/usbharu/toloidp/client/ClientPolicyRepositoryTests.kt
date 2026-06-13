@@ -11,7 +11,7 @@ import kotlin.test.assertNull
 @SpringBootTest(
     properties = [
         "tolo-idp.seed.enabled=false",
-        "spring.datasource.url=jdbc:h2:mem:client-policy-tests;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
+        "spring.datasource.url=jdbc:h2:mem:client-policy-tests;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;DATABASE_TO_UPPER=false",
     ],
 )
 class ClientPolicyRepositoryTests(

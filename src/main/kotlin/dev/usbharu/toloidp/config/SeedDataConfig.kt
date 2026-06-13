@@ -16,6 +16,7 @@ import org.springframework.security.oauth2.server.authorization.settings.ClientS
 import org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings
 import org.springframework.security.provisioning.UserDetailsManager
+import org.springframework.transaction.annotation.Transactional
 import java.time.Duration
 import java.util.UUID
 
@@ -28,9 +29,31 @@ class SeedDataConfig {
         userDetailsManager: UserDetailsManager,
         registeredClientRepository: RegisteredClientRepository,
         clientPolicyRepository: ClientPolicyRepository,
-    ): ApplicationRunner = ApplicationRunner {
+    ): ApplicationRunner =
+        SeedDataRunner(
+            properties,
+            passwordEncoder,
+            userDetailsManager,
+            registeredClientRepository,
+            clientPolicyRepository,
+        )
+}
+
+open class SeedDataRunner(
+    private val properties: IdpProperties,
+    private val passwordEncoder: PasswordEncoder,
+    private val userDetailsManager: UserDetailsManager,
+    private val registeredClientRepository: RegisteredClientRepository,
+    private val clientPolicyRepository: ClientPolicyRepository,
+) : ApplicationRunner {
+    @Transactional
+    override fun run(args: org.springframework.boot.ApplicationArguments) {
+        seed()
+    }
+
+    private fun seed() {
         if (!properties.seed.enabled) {
-            return@ApplicationRunner
+            return
         }
 
         if (!userDetailsManager.userExists("user-123")) {

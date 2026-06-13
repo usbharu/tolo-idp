@@ -34,10 +34,11 @@ import org.springframework.security.oauth2.server.authorization.context.Authoriz
 import org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat
 import org.springframework.security.oauth2.server.authorization.token.DefaultOAuth2TokenContext
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
+import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 import java.time.Instant
 
-class SpecTokenExchangeAuthenticationProvider(
+open class SpecTokenExchangeAuthenticationProvider(
     private val authorizationService: OAuth2AuthorizationService,
     private val tokenGenerator: OAuth2TokenGenerator<out OAuth2Token>,
     private val clientPolicyRepository: ClientPolicyRepository,
@@ -48,6 +49,7 @@ class SpecTokenExchangeAuthenticationProvider(
     private val auditService: AuditService,
     private val clock: Clock,
 ) : AuthenticationProvider {
+    @Transactional
     override fun authenticate(authentication: Authentication): Authentication {
         log.structuredTrace(
             "Token Exchange authentication started",

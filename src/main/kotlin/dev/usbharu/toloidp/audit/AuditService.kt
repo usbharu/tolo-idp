@@ -2,9 +2,12 @@ package dev.usbharu.toloidp.audit
 
 import org.slf4j.LoggerFactory
 import org.springframework.data.annotation.Id
+import org.springframework.data.relational.core.mapping.Column
 import org.springframework.data.relational.core.mapping.Table
 import org.springframework.data.repository.CrudRepository
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.annotation.Transactional
 import tools.jackson.databind.ObjectMapper
 import java.time.Clock
 import java.time.Instant
@@ -17,6 +20,7 @@ class AuditService(
 ) {
     private val logger = LoggerFactory.getLogger("audit.token")
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     fun record(event: TokenAuditEvent) {
         val timestamp = Instant.now(clock)
         val payload = objectMapper.writeValueAsString(event.copy(timestamp = timestamp.toString()))
@@ -49,24 +53,43 @@ class AuditService(
 @Table("idp_audit_log")
 data class AuditLogRecord(
     @Id
+    @Column("id")
     val id: Long? = null,
+    @Column("timestamp")
     val timestamp: Instant,
+    @Column("request_id")
     val requestId: String?,
+    @Column("client_id")
     val clientId: String?,
+    @Column("subject")
     val subject: String?,
+    @Column("source_token_use")
     val sourceTokenUse: String?,
+    @Column("requested_token_use")
     val requestedTokenUse: String?,
+    @Column("requested_audience")
     val requestedAudience: String?,
+    @Column("requested_resource")
     val requestedResource: String?,
+    @Column("requested_scope")
     val requestedScope: String,
+    @Column("issued_scope")
     val issuedScope: String,
+    @Column("tenant_id")
     val tenantId: String?,
+    @Column("event_id")
     val eventId: String?,
+    @Column("result")
     val result: String,
+    @Column("failure_reason")
     val failureReason: String?,
+    @Column("source_ip")
     val sourceIp: String?,
+    @Column("user_agent")
     val userAgent: String?,
+    @Column("issued_jti")
     val issuedJti: String?,
+    @Column("payload")
     val payload: String,
 )
 
