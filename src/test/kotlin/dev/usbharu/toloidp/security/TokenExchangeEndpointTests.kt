@@ -437,10 +437,22 @@ class TokenExchangeEndpointTests(
             .andExpect(jsonPath("$.error").value("invalid_request"))
     }
 
+    @Test
+    fun rejectsJwtSubjectTokenTypeAsInvalidRequest() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, subjectTokenType = JWT_TOKEN_TYPE))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+
+        assertEquals("subject_token_type", latestAudit()["failure_reason"])
+    }
+
     private fun tokenExchangeRequest(
         subjectToken: String?,
         clientId: String = "client-123",
         clientSecret: String = "secret",
+        subjectTokenType: String = ACCESS_TOKEN_TYPE,
         audience: String? = "backend-api",
         resource: String? = "https://api.example.com/tenants/tenant-a/events/event-1",
         scope: String? = "events.read",
@@ -449,7 +461,7 @@ class TokenExchangeEndpointTests(
             .with(httpBasic(clientId, clientSecret))
             .contentType(MediaType.APPLICATION_FORM_URLENCODED)
             .param("grant_type", AuthorizationGrantType.TOKEN_EXCHANGE.value)
-            .param("subject_token_type", ACCESS_TOKEN_TYPE)
+            .param("subject_token_type", subjectTokenType)
             .apply {
                 if (subjectToken != null) {
                     param("subject_token", subjectToken)

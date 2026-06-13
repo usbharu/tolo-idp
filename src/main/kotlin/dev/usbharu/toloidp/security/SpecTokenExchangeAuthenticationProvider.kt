@@ -97,7 +97,7 @@ open class SpecTokenExchangeAuthenticationProvider(
             ) {
                 fail("invalid_grant", "invalid_token_use_transition")
             }
-            if (tokenExchange.subjectTokenType != ACCESS_TOKEN_TYPE && tokenExchange.subjectTokenType != JWT_TOKEN_TYPE) {
+            if (tokenExchange.subjectTokenType != ACCESS_TOKEN_TYPE) {
                 fail("invalid_request", "subject_token_type")
             }
             val audience = tokenExchange.audiences.singleOrNull()
