@@ -69,7 +69,7 @@ class RateLimitIdentityExtractorTests(
     }
 
     @Test
-    fun extractsTokenExchangeSubjectWithoutValidatingJwt() {
+    fun tokenExchangeRequestDoesNotUseUnvalidatedJwtClaims() {
         val request = MockHttpServletRequest("POST", "/oauth2/token").apply {
             remoteAddr = "192.0.2.10"
             contentType = MediaType.APPLICATION_FORM_URLENCODED_VALUE
@@ -79,7 +79,7 @@ class RateLimitIdentityExtractorTests(
 
         val identity = extractor.identity(request)
 
-        assertEquals("user-123", identity.userId)
+        assertNull(identity.userId)
     }
 
     private fun loginRequest(body: String): HttpServletRequest =
@@ -89,4 +89,3 @@ class RateLimitIdentityExtractorTests(
             setContent(body.toByteArray())
         }
 }
-
