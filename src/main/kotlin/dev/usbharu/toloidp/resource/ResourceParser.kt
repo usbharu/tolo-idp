@@ -52,7 +52,7 @@ class ResourceParser(
         } catch (ex: IllegalArgumentException) {
             throw ResourceValidationException("resource_invalid_format")
         }
-        if (!uri.isAbsolute || uri.scheme != "https" || uri.host !in properties.resource.allowedHosts) {
+        if (!uri.isAbsolute || uri.scheme != "https" || uri.host !in properties.resource.allowedHosts || uri.port != -1) {
             throw ResourceValidationException("resource_not_allowed")
         }
         if (uri.rawQuery != null || uri.rawFragment != null || uri.rawUserInfo != null) {
@@ -61,8 +61,13 @@ class ResourceParser(
         return uri
     }
 
-    private fun pathSegments(uri: URI): List<String> =
-        uri.rawPath.split('/').filter { it.isNotEmpty() }
+    private fun pathSegments(uri: URI): List<String> {
+        val rawPath = uri.rawPath
+        if (!rawPath.startsWith("/") || rawPath.contains("//") || rawPath.endsWith("/")) {
+            throw ResourceValidationException("resource_invalid_format")
+        }
+        return rawPath.removePrefix("/").split('/')
+    }
 }
 
 class ResourceValidationException(

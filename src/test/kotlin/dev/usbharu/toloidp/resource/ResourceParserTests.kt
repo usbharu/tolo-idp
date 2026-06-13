@@ -90,4 +90,19 @@ class ResourceParserTests {
             }
         }
     }
+
+    @Test
+    fun rejectsExplicitPortAndEmptyPathSegments() {
+        val rejectedResources = listOf(
+            "https://api.example.com:443/tenants/tenant-a",
+            "https://api.example.com/tenants//tenant-a",
+            "https://api.example.com/tenants/tenant-a/events//event-1",
+        )
+
+        rejectedResources.forEach { resource ->
+            assertFailsWith<ResourceValidationException> {
+                parser.parseEvent(resource)
+            }
+        }
+    }
 }
