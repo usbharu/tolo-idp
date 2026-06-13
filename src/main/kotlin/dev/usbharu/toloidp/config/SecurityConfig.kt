@@ -88,9 +88,19 @@ import java.security.spec.RSAPublicKeySpec
 import java.util.Base64
 import java.util.UUID
 
+/**
+ * IDP の Spring Security / Spring Authorization Server 構成を束ねる設定クラス。
+ *
+ * filter chain は個別性の高い内部 endpoint から一般 application endpoint の順に並べる。
+ * このクラスの Authorization Server 関連 Bean は、IDP 仕様でより厳密な Token Exchange /
+ * JWT / resource / audience / error handling が必要な箇所でデフォルト挙動を置き換える。
+ */
 @Configuration
 @EnableConfigurationProperties(IdpProperties::class)
 class SecurityConfig {
+    /**
+     * 内部 relation-membership cache purge API を x509 認証と証明書 subject の許可リストで保護する。
+     */
     @Bean
     @Order(0)
     fun relationCacheSecurityFilterChain(
@@ -124,6 +134,9 @@ class SecurityConfig {
         return http.build()
     }
 
+    /**
+     * この IDP は JWT access token と内部 denylist を使うため、RFC 7009 の revocation endpoint は公開しない。
+     */
     @Bean
     @Order(1)
     fun disabledRevocationSecurityFilterChain(
@@ -147,6 +160,13 @@ class SecurityConfig {
         return http.build()
     }
 
+    /**
+     * Authorization Server endpoint を構成し、この IDP でセキュリティ上重要な拡張点を差し替える。
+     *
+     * Authorization Code endpoint では tenant resource を注入・検証し、token endpoint では
+     * `spec.md` の tenant-access から event-access への Token Exchange に
+     * [SpecTokenExchangeAuthenticationProvider] を使う。
+     */
     @Bean
     @Order(2)
     fun authorizationServerSecurityFilterChain(
@@ -235,6 +255,9 @@ class SecurityConfig {
         return http.build()
     }
 
+    /**
+     * Authorization Server 外の application endpoint を保護する。
+     */
     @Bean
     @Order(3)
     fun applicationSecurityFilterChain(
@@ -255,6 +278,10 @@ class SecurityConfig {
         return http.build()
     }
 
+    /**
+     * Spring Security の Jackson module を使って framework 型を保持しつつ、OAuth2 registered client を
+     * JDBC に保存する repository。
+     */
     @Bean
     fun registeredClientRepository(jdbcTemplate: JdbcTemplate): RegisteredClientRepository {
         val jsonMapper = registeredClientJsonMapper()
@@ -340,6 +367,11 @@ class SecurityConfig {
         }
     }
 
+    /**
+     * 発行済み authorization を永続化する。
+     *
+     * Token Exchange で subject token を検証するため、生成済み JWT metadata も保持する。
+     */
     @Bean
     fun authorizationService(
         jdbcTemplate: JdbcTemplate,
@@ -347,6 +379,9 @@ class SecurityConfig {
     ): OAuth2AuthorizationService =
         JdbcOAuth2AuthorizationService(jdbcTemplate, registeredClientRepository)
 
+    /**
+     * registered client の Authorization Code consent を永続化する。
+     */
     @Bean
     fun authorizationConsentService(
         jdbcTemplate: JdbcTemplate,
@@ -354,6 +389,10 @@ class SecurityConfig {
     ): OAuth2AuthorizationConsentService =
         JdbcOAuth2AuthorizationConsentService(jdbcTemplate, registeredClientRepository)
 
+    /**
+     * Spring Authorization Server のデフォルト Token Exchange 挙動ではなく、プロジェクト仕様を強制する
+     * Token Exchange provider。
+     */
     @Bean
     fun specTokenExchangeAuthenticationProvider(
         authorizationService: OAuth2AuthorizationService,
@@ -378,22 +417,40 @@ class SecurityConfig {
             clock,
         )
 
+    /**
+     * 設定された issuer を Authorization Server metadata と JWT claim 生成へ反映する。
+     */
     @Bean
     fun authorizationServerSettings(properties: IdpProperties): AuthorizationServerSettings =
         AuthorizationServerSettings.builder().issuer(properties.issuer).build()
 
+    /**
+     * login API と Spring Security session 認証で使う JDBC ベースの user store。
+     */
     @Bean
     fun userDetailsService(dataSource: DataSource): UserDetailsManager =
         JdbcUserDetailsManager(dataSource)
 
+    /**
+     * 保存済み user password に `{bcrypt}` などの encoder id を含められる delegating password encoder。
+     */
     @Bean
     fun passwordEncoder(): PasswordEncoder =
         PasswordEncoderFactories.createDelegatingPasswordEncoder()
 
+    /**
+     * tenant / event scope 認可で共有する role hierarchy。
+     */
     @Bean
     fun roleHierarchy(): RoleHierarchy =
         ScopePolicy.defaultRoleHierarchy()
 
+    /**
+     * self-contained JWT access token の署名と検証に使う JWK source。
+     *
+     * production では安定した RSA private key を設定する。ephemeral key は明示的に許可された
+     * development / test 用に限定する。
+     */
     @Bean
     fun jwkSource(properties: IdpProperties): JWKSource<SecurityContext> {
         val rsaKey = configuredRsaKey(properties.jwk) ?: ephemeralRsaKey(properties.jwk)
@@ -455,14 +512,23 @@ class SecurityConfig {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
     }
 
+    /**
+     * 設定済み JWK source を使う JWT encoder。
+     */
     @Bean
     fun jwtEncoder(jwkSource: JWKSource<SecurityContext>): JwtEncoder =
         NimbusJwtEncoder(jwkSource)
 
+    /**
+     * Authorization Server の補助コードと test で使う JWT decoder。
+     */
     @Bean
     fun jwtDecoder(jwkSource: JWKSource<SecurityContext>): JwtDecoder =
         OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource)
 
+    /**
+     * JWT を発行し、[ToloJwtCustomizer] で tenant / event claim を付与する access token generator。
+     */
     @Bean
     fun tokenGenerator(
         jwtEncoder: JwtEncoder,
@@ -473,6 +539,11 @@ class SecurityConfig {
         return DelegatingOAuth2TokenGenerator(jwtGenerator)
     }
 
+    /**
+     * security service で共有する UTC clock。
+     *
+     * 有効期限と audit timestamp を test から制御しやすくする。
+     */
     @Bean
     fun clock(): java.time.Clock = java.time.Clock.systemUTC()
 

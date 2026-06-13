@@ -20,6 +20,12 @@ import org.springframework.security.oauth2.server.authorization.authentication.O
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationValidator
 import java.util.function.Consumer
 
+/**
+ * tenant scope の access token 発行に使う Authorization Code request validator。
+ *
+ * Spring Authorization Server のデフォルト検証に加えて、tenant access JWT 発行前に必要な
+ * client policy / tenant resource / audience / relation membership / scope を検証する。
+ */
 class TenantAuthorizationValidator(
     private val clientPolicyRepository: ClientPolicyRepository,
     private val resourceParser: ResourceParser,
@@ -28,6 +34,9 @@ class TenantAuthorizationValidator(
 ) : Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> {
     private val defaultValidator = OAuth2AuthorizationCodeRequestAuthenticationValidator()
 
+    /**
+     * tenant や membership の詳細を OAuth2 error code 以上に漏らさず、authorization request を検証する。
+     */
     override fun accept(context: OAuth2AuthorizationCodeRequestAuthenticationContext) {
         log.structuredTrace("Tenant authorization validation started", "event" to "tenant_authorization_validation_started", "client_id" to context.registeredClient.clientId)
         defaultValidator.accept(context)

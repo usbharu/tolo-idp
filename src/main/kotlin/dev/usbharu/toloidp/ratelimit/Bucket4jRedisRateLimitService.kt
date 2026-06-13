@@ -9,6 +9,11 @@ import java.time.Duration
 import java.util.Base64
 import java.util.function.Supplier
 
+/**
+ * Redis をバックエンドにして IP / user / IP-user 単位の bucket を評価する [RateLimitService]。
+ *
+ * Redis の bucket key へ生の IP アドレスや user ID を保存しないよう、identity はハッシュ化して使う。
+ */
 class Bucket4jRedisRateLimitService(
     private val proxyManager: ProxyManager<ByteArray>,
     properties: IdpProperties,
@@ -18,6 +23,10 @@ class Bucket4jRedisRateLimitService(
     private val userConfiguration = bucketConfiguration(properties.rateLimit.user)
     private val ipUserConfiguration = bucketConfiguration(properties.rateLimit.ipUser)
 
+    /**
+     * 対象となるすべての bucket を消費前に確認し、拒否されるリクエストで一部の次元だけが
+     * 消費されないようにする。
+     */
     override fun consume(identity: RateLimitIdentity): RateLimitDecision {
         val checks = checks(identity)
 

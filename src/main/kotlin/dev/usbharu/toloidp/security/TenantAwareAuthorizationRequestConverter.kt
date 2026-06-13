@@ -9,11 +9,21 @@ import org.springframework.security.oauth2.server.authorization.authentication.O
 import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2AuthorizationCodeRequestAuthenticationConverter
 import org.springframework.security.web.authentication.AuthenticationConverter
 
+/**
+ * ログイン時に選択された tenant を OAuth2 `resource` パラメータへ結び付ける
+ * authorization request converter。
+ *
+ * ログイン API が作成した Spring Security session から選択 tenant を読み取り、後続の
+ * authorization validation と JWT customization が参照する canonical tenant resource URI として表現する。
+ */
 class TenantAwareAuthorizationRequestConverter(
     private val resourceParser: ResourceParser,
 ) : AuthenticationConverter {
     private val delegate = OAuth2AuthorizationCodeRequestAuthenticationConverter()
 
+    /**
+     * authorization request を変換し、現在の session に選択 tenant がある場合は tenant resource を注入する。
+     */
     override fun convert(request: HttpServletRequest): Authentication? {
         val converted = delegate.convert(request)
         if (converted !is OAuth2AuthorizationCodeRequestAuthenticationToken) {

@@ -38,6 +38,14 @@ import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 import java.time.Instant
 
+/**
+ * このリポジトリの OAuth2 tenant-access から event-access への Token Exchange 仕様を実装する
+ * authentication provider。
+ *
+ * Spring Authorization Server のデフォルト Token Exchange provider を置き換え、audience /
+ * resource / client policy / subject token / membership / scope / denylist / audit の要件を
+ * 1 つの認可境界で強制する。
+ */
 open class SpecTokenExchangeAuthenticationProvider(
     private val authorizationService: OAuth2AuthorizationService,
     private val tokenGenerator: OAuth2TokenGenerator<out OAuth2Token>,
@@ -49,6 +57,10 @@ open class SpecTokenExchangeAuthenticationProvider(
     private val auditService: AuditService,
     private val clock: Clock,
 ) : AuthenticationProvider {
+    /**
+     * Token Exchange リクエストを認証し、すべての仕様チェックに成功した場合だけ単一の
+     * event access token を発行する。
+     */
     @Transactional
     override fun authenticate(authentication: Authentication): Authentication {
         log.structuredTrace(

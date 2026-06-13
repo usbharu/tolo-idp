@@ -12,6 +12,12 @@ import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 import java.time.Instant
 
+/**
+ * remote relation API の前段で短期間の所属キャッシュを使う、主系の [RelationService] 実装。
+ *
+ * lookup 前に tenant ID を検証し、認可と Token Exchange の判定に使う正規化済みの
+ * [TenantMembership] だけをキャッシュする。
+ */
 @Service
 @Primary
 class CachedRelationService(
@@ -22,6 +28,11 @@ class CachedRelationService(
     private val resourceParser: ResourceParser,
     private val clock: Clock,
 ) : RelationService {
+    /**
+     * ユーザーの tenant / event 所属情報を返す。
+     *
+     * 有効期限内のキャッシュがあればそれを使い、なければ delegate から取得して更新する。
+     */
     @Transactional
     override fun getMembership(tenantId: String, userId: String): TenantMembership {
         log.structuredTrace("Relation membership lookup started", "event" to "relation_membership_lookup_started", "tenant_id" to tenantId, "subject" to userId)

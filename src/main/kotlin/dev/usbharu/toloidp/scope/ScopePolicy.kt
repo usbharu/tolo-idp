@@ -23,10 +23,18 @@ enum class RelationRole {
 
 class UnknownRelationRoleException : RuntimeException("relation_role_unknown")
 
+/**
+ * relation role から scope を導出し、要求 scope を検証する中心的な policy。
+ *
+ * 呼び出し側は requested scope を明示的に渡す。許可外 scope は暗黙に縮小せず拒否する。
+ */
 @Component
 class ScopePolicy(
     private val roleHierarchy: RoleHierarchy = defaultRoleHierarchy(),
 ) {
+    /**
+     * relation role から role hierarchy 経由で到達できる OAuth2 scope を返す。
+     */
     fun allowedScopes(role: RelationRole): Set<String> {
         val reachableAuthorities = roleHierarchy.getReachableGrantedAuthorities(
             listOf(SimpleGrantedAuthority(role.authority)),
@@ -38,6 +46,9 @@ class ScopePolicy(
             .mapTo(linkedSetOf()) { it.removePrefix(SCOPE_AUTHORITY_PREFIX) }
     }
 
+    /**
+     * requested scope がすべて allowed set に含まれることを要求する。
+     */
     fun requireAllowed(requested: Set<String>, allowed: Set<String>, reason: String) {
         if (!allowed.containsAll(requested)) {
             throw ScopeNotAllowedException(reason)

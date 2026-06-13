@@ -23,6 +23,13 @@ import org.springframework.stereotype.Component
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * access token JWT に仕様で定義した claim を追加する customizer。
+ *
+ * Authorization Code grant では tenant access token、Token Exchange grant では event access
+ * token を生成する。role claim は意図的に入れず、Resource Server が token context と自身の
+ * policy から最終認可を行う。
+ */
 @Component
 class ToloJwtCustomizer(
     private val clientPolicyRepository: ClientPolicyRepository,
@@ -30,6 +37,9 @@ class ToloJwtCustomizer(
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
 ) : OAuth2TokenCustomizer<JwtEncodingContext> {
+    /**
+     * access token だけを対象にし、grant type ごとの claim 付与処理へ委譲する。
+     */
     override fun customize(context: JwtEncodingContext) {
         if (context.tokenType != OAuth2TokenType.ACCESS_TOKEN) {
             return

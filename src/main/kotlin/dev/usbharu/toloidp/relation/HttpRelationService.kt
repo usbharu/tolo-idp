@@ -16,6 +16,12 @@ import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientException
 import java.net.http.HttpClient
 
+/**
+ * tenant / event 所属情報の正本として remote relation API を参照する [RelationService] 実装。
+ *
+ * relation API の応答は受け入れる前に検証し、tenant / user / event / role の不整合を
+ * Authorization Server の認可判定へ持ち込まない。
+ */
 @Service
 class HttpRelationService(
     properties: IdpProperties,
@@ -32,6 +38,10 @@ class HttpRelationService(
         )
         .build()
 
+    /**
+     * relation API から所属情報を取得し、上流の失敗や不正な応答を内部向けの
+     * [RelationLookupException] 理由へ変換する。
+     */
     override fun getMembership(tenantId: String, userId: String): TenantMembership {
         log.structuredTrace("Relation membership HTTP lookup started", "event" to "relation_membership_http_lookup_started", "tenant_id" to tenantId, "subject" to userId)
         resourceParser.requireValidId(tenantId)

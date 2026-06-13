@@ -12,6 +12,11 @@ import tools.jackson.databind.ObjectMapper
 import java.time.Clock
 import java.time.Instant
 
+/**
+ * トークン発行・交換に関する監査イベントを永続化し、監査ログへ出力するサービス。
+ *
+ * OAuth2 の外部エラーレスポンスへ出さない成功・失敗理由を、内部監査用の記録として保持する。
+ */
 @Service
 class AuditService(
     private val repository: AuditLogRepository,
@@ -20,6 +25,9 @@ class AuditService(
 ) {
     private val logger = LoggerFactory.getLogger("audit.token")
 
+    /**
+     * トークン監査イベントを独立したトランザクションで保存し、同じ構造化ペイロードを監査ロガーへ出力する。
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     fun record(event: TokenAuditEvent) {
         val timestamp = Instant.now(clock)
