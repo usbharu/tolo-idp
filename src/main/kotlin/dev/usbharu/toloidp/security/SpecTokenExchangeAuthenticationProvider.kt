@@ -122,6 +122,11 @@ open class SpecTokenExchangeAuthenticationProvider(
             val subjectToken = subjectAuthorization.getToken<OAuth2Token>(tokenExchange.subjectToken)
                 ?: fail("invalid_grant", "token_revoked")
             val claims = subjectToken.claims ?: fail("invalid_grant", "token_revoked")
+            val subjectAudience = singleAudience(claims["aud"])
+                ?: fail("invalid_grant", "subject_token_invalid_claims")
+            if (subjectAudience != audience) {
+                fail("invalid_grant", "subject_token_audience_mismatch")
+            }
             val subjectJti = claims["jti"] as? String
                 ?: fail("invalid_grant", "subject_token_invalid_claims")
             val denied = isDenied(subjectJti)
@@ -306,6 +311,13 @@ open class SpecTokenExchangeAuthenticationProvider(
             is String -> value.split(' ').filter { it.isNotEmpty() }.toSet()
             is Collection<*> -> value.filterIsInstance<String>().toSet()
             else -> emptySet()
+        }
+
+    private fun singleAudience(value: Any?): String? =
+        when (value) {
+            is String -> value
+            is Collection<*> -> value.singleOrNull() as? String
+            else -> null
         }
 
     private fun fail(errorCode: String, reason: String): Nothing {

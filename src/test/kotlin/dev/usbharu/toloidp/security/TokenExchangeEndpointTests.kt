@@ -440,6 +440,30 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
+    fun rejectsSubjectTokenWithMultipleAudiences() {
+        val subjectToken = saveTenantAuthorization(subjectAudience = listOf("backend-api", "other-api"))
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        assertEquals("subject_token_invalid_claims", latestAudit()["failure_reason"])
+    }
+
+    @Test
+    fun rejectsSubjectTokenAudienceMismatch() {
+        val subjectToken = saveTenantAuthorization(subjectAudience = listOf("other-api"))
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        assertEquals("subject_token_audience_mismatch", latestAudit()["failure_reason"])
+    }
+
+    @Test
     fun rejectsMissingEventMembershipAsInvalidGrantWithoutLeakingDetailsInErrorCode() {
         val subjectToken = saveTenantAuthorization()
 
@@ -523,6 +547,7 @@ class TokenExchangeEndpointTests(
     private fun saveTenantAuthorization(
         tokenUse: String = TOKEN_USE_TENANT_ACCESS,
         subject: String? = "user-123",
+        subjectAudience: Any? = listOf("backend-api"),
         tenantId: String = "tenant-a",
         scopes: Set<String> = setOf("tenant.read", "events.read", "events.write"),
         jti: String? = "jti-${UUID.randomUUID()}",
@@ -551,7 +576,6 @@ class TokenExchangeEndpointTests(
             .token(token) { metadata ->
                 val claims = linkedMapOf<String, Any>(
                     "iss" to "http://localhost:8080",
-                    "aud" to listOf("backend-api"),
                     "client_id" to "client-123",
                     "scope" to scopes.joinToString(" "),
                     "token_use" to tokenUse,
@@ -563,6 +587,9 @@ class TokenExchangeEndpointTests(
                 )
                 if (subject != null) {
                     claims["sub"] = subject
+                }
+                if (subjectAudience != null) {
+                    claims["aud"] = subjectAudience
                 }
                 if (jti != null) {
                     claims["jti"] = jti
