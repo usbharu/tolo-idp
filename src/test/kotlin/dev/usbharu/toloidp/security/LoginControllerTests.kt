@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPat
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.mock.web.MockHttpSession
 import java.time.Instant
+import kotlin.test.assertTrue
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -54,6 +55,16 @@ class LoginControllerTests(
             .andExpect(jsonPath("$.resource").value("https://api.example.com/tenants/tenant-a"))
             .andExpect(jsonPath("$.authorities[0]").value("ROLE_USER"))
             .andExpect(content().string(not(containsString("password"))))
+    }
+
+    @Test
+    fun loginInvalidatesExistingSessionBeforeAuthentication() {
+        val preAuthSession = MockHttpSession()
+
+        mockMvc.perform(loginRequest("user-123", "password", "tenant-a").session(preAuthSession))
+            .andExpect(status().isOk)
+
+        assertTrue(preAuthSession.isInvalid)
     }
 
     @Test

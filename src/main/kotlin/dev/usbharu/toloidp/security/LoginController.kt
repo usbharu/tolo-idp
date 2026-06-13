@@ -100,6 +100,7 @@ class LoginController(
         )
         val context = SecurityContextImpl(authentication)
         SecurityContextHolder.setContext(context)
+        httpRequest.getSession(false)?.invalidate()
         val session = httpRequest.getSession(true)
         session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, context)
         session.setAttribute(SELECTED_TENANT_SESSION_ATTRIBUTE, request.tenantId)
