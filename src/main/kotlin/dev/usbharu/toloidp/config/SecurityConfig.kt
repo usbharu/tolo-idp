@@ -12,6 +12,7 @@ import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.ratelimit.RateLimitFilter
 import dev.usbharu.toloidp.scope.ScopePolicy
 import dev.usbharu.toloidp.security.JtiDenylistRepository
+import dev.usbharu.toloidp.security.SpecTokenRevocationAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
 import dev.usbharu.toloidp.security.TenantAuthorizationValidator
 import dev.usbharu.toloidp.security.TenantAwareAuthorizationRequestConverter
@@ -55,6 +56,7 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenIntrospectionAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenExchangeAuthenticationProvider
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.security.oauth2.server.authorization.http.converter.OAuth2TokenIntrospectionHttpMessageConverter
@@ -135,32 +137,6 @@ class SecurityConfig {
     }
 
     /**
-     * この IDP は JWT access token と内部 denylist を使うため、RFC 7009 の revocation endpoint は公開しない。
-     */
-    @Bean
-    @Order(1)
-    fun disabledRevocationSecurityFilterChain(
-        http: HttpSecurity,
-        rateLimitFilter: ObjectProvider<RateLimitFilter>,
-    ): SecurityFilterChain {
-        http.securityMatcher("/oauth2/revoke")
-            .authorizeHttpRequests {
-                it.anyRequest().denyAll()
-            }
-            .csrf { it.disable() }
-            .formLogin { it.disable() }
-            .logout { it.disable() }
-            .exceptionHandling {
-                it.authenticationEntryPoint(HttpStatusEntryPoint(HttpStatus.NOT_FOUND))
-                it.accessDeniedHandler { _, response, _ ->
-                    response.sendError(HttpStatus.NOT_FOUND.value())
-                }
-            }
-        addRateLimitFilter(http, rateLimitFilter)
-        return http.build()
-    }
-
-    /**
      * Authorization Server endpoint を構成し、この IDP でセキュリティ上重要な拡張点を差し替える。
      *
      * Authorization Code endpoint では tenant resource を注入・検証し、token endpoint では
@@ -181,6 +157,8 @@ class SecurityConfig {
         scopePolicy: ScopePolicy,
         @Qualifier("specTokenExchangeAuthenticationProvider")
         specTokenExchangeAuthenticationProvider: AuthenticationProvider,
+        @Qualifier("specTokenRevocationAuthenticationProvider")
+        specTokenRevocationAuthenticationProvider: AuthenticationProvider,
         settings: AuthorizationServerSettings,
         rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
@@ -195,8 +173,8 @@ class SecurityConfig {
                 .authorizationServerMetadataEndpoint { metadataEndpoint ->
                     metadataEndpoint.authorizationServerMetadataCustomizer { metadata ->
                         metadata.claims { claims ->
-                            claims.remove(OAuth2AuthorizationServerMetadataClaimNames.REVOCATION_ENDPOINT)
-                            claims.remove(OAuth2AuthorizationServerMetadataClaimNames.REVOCATION_ENDPOINT_AUTH_METHODS_SUPPORTED)
+                            claims[OAuth2AuthorizationServerMetadataClaimNames.REVOCATION_ENDPOINT_AUTH_METHODS_SUPPORTED] =
+                                listOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
                         }
                         metadata.grantTypes {
                             it.clear()
@@ -242,6 +220,13 @@ class SecurityConfig {
                 .tokenIntrospectionEndpoint { introspectionEndpoint ->
                     introspectionEndpoint.errorResponseHandler(oauth2CodeOnlyErrorResponseHandler())
                     introspectionEndpoint.introspectionResponseHandler(tokenIntrospectionResponseHandler())
+                }
+                .tokenRevocationEndpoint { revocationEndpoint ->
+                    revocationEndpoint.errorResponseHandler(oauth2CodeOnlyErrorResponseHandler())
+                    revocationEndpoint.authenticationProviders { providers ->
+                        providers.removeIf { it is OAuth2TokenRevocationAuthenticationProvider }
+                        providers.add(specTokenRevocationAuthenticationProvider)
+                    }
                 }
         }
 
@@ -412,6 +397,25 @@ class SecurityConfig {
             resourceParser,
             relationService,
             scopePolicy,
+            jtiDenylistRepository,
+            auditService,
+            clock,
+        )
+
+    /**
+     * RFC 7009 revocation endpoint を、JWT access token の jti denylist 登録口として扱う provider。
+     */
+    @Bean
+    fun specTokenRevocationAuthenticationProvider(
+        authorizationService: OAuth2AuthorizationService,
+        clientPolicyRepository: ClientPolicyRepository,
+        jtiDenylistRepository: JtiDenylistRepository,
+        auditService: AuditService,
+        clock: Clock,
+    ): AuthenticationProvider =
+        SpecTokenRevocationAuthenticationProvider(
+            authorizationService,
+            clientPolicyRepository,
             jtiDenylistRepository,
             auditService,
             clock,

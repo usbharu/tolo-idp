@@ -25,8 +25,13 @@ class AuthorizationServerSurfaceTests(
     fun authorizationServerMetadataOnlyAdvertisesSupportedSurface() {
         mockMvc.perform(get("/.well-known/oauth-authorization-server"))
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.revocation_endpoint").doesNotExist())
-            .andExpect(jsonPath("$.revocation_endpoint_auth_methods_supported").doesNotExist())
+            .andExpect(jsonPath("$.revocation_endpoint").exists())
+            .andExpect(
+                jsonPath(
+                    "$.revocation_endpoint_auth_methods_supported",
+                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                ),
+            )
             .andExpect(
                 jsonPath(
                     "$.grant_types_supported",
@@ -48,12 +53,12 @@ class AuthorizationServerSurfaceTests(
     }
 
     @Test
-    fun tokenRevocationEndpointIsNotAvailable() {
+    fun tokenRevocationEndpointRequiresTokenParameter() {
         mockMvc.perform(
             post("/oauth2/revoke")
                 .with(httpBasic("client-123", "secret"))
-                .param("token", "bogus"),
         )
-            .andExpect(status().isNotFound)
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
     }
 }

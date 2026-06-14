@@ -31,7 +31,7 @@ class AuditService(
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     fun record(event: TokenAuditEvent) {
         val timestamp = Instant.now(clock)
-        val payload = objectMapper.writeValueAsString(event.copy(timestamp = timestamp.toString()))
+        val payload = objectMapper.writeValueAsString(event.toPayload(timestamp))
         logger.info(payload)
         repository.save(
             AuditLogRecord(
@@ -56,6 +56,27 @@ class AuditService(
             ),
         )
     }
+
+    private fun TokenAuditEvent.toPayload(timestamp: Instant): Map<String, Any?> =
+        linkedMapOf(
+            "timestamp" to timestamp.toString(),
+            "requestId" to requestId,
+            "clientId" to clientId,
+            "subject" to subject,
+            "sourceTokenUse" to sourceTokenUse,
+            "requestedTokenUse" to requestedTokenUse,
+            "requestedAudience" to requestedAudience,
+            "requestedResource" to requestedResource,
+            "requestedScope" to ArrayList(requestedScope),
+            "issuedScope" to ArrayList(issuedScope),
+            "tenantId" to tenantId,
+            "eventId" to eventId,
+            "result" to result,
+            "failureReason" to failureReason,
+            "sourceIp" to sourceIp,
+            "userAgent" to userAgent,
+            "issuedJti" to issuedJti,
+        )
 }
 
 @Table("idp_audit_log")

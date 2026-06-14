@@ -720,10 +720,55 @@ JWT のみを使用するため、失効は以下の方針とする。
 - access token は短命にする
 - すべての JWT に jti を含める
 - 強制失効が必要な場合は jti denylist を使う
+- jti denylist への登録入口は RFC 7009 Token Revocation endpoint とする
 - denylist の TTL は token の exp までとする
 ```
 
-### 17.1 token TTL
+### 17.1 Token Revocation endpoint
+
+```http
+POST /oauth2/revoke
+Authorization: Basic ...
+Content-Type: application/x-www-form-urlencoded
+
+token=...
+token_type_hint=access_token
+```
+
+`token_type_hint` は未指定、または `access_token` のみ許可する。
+`refresh_token` など access token 以外の hint は `unsupported_token_type` を返す。
+
+Revocation 対象は `tenant_access` / `event_access` の JWT access token のみとする。
+
+Authorization Server は以下を確認する。
+
+```text
+- client が認証済みである
+- client が confidential client である
+- token が access token として保存されている場合、発行先 client と revocation 要求 client が一致する
+- token の JWT claim に jti / exp / token_use が存在する
+```
+
+有効な対象 token の revocation では、Authorization Server は token の `jti` を
+`idp_jti_denylist` に登録し、`expires_at` には token の `exp` を設定する。
+`exp` が現在時刻以前の場合は denylist へ登録しない。
+
+Revocation は RFC 7009 に従い、以下は `200 OK` の空レスポンスとする。
+
+```text
+- revocation 成功
+- 未知 token
+- 期限切れ token
+- 既に失効済みの token
+```
+
+別 client が発行した token の revocation、client 認証不正、public client からの
+revocation、access token 以外の hint は OAuth2 error とする。
+
+Revocation endpoint は token 本体、client secret、authorization code、password を
+レスポンスおよびログへ出力してはならない。
+
+### 17.2 token TTL
 
 現行実装のデフォルト TTL:
 
@@ -799,7 +844,7 @@ relation service の `404 tenant not found`、通信失敗、timeout、不正 re
 
 ## 19. 監査ログ仕様
 
-Token Exchange は認可境界であるため、成功・失敗の両方を必ず監査ログに記録する。
+Token Exchange と Token Revocation は認可境界であるため、成功・失敗の両方を必ず監査ログに記録する。
 
 ### 19.1 記録項目
 
@@ -824,6 +869,9 @@ issued_jti
 ```
 
 現行実装では Token Exchange の監査ログを DB の `idp_audit_log` と logger `audit.token` に記録する。
+Token Revocation も同じ `idp_audit_log` と logger `audit.token` に記録する。
+Revocation の場合、`requested_token_use` は `revocation`、`issued_jti` は失効対象の
+`jti` とする。
 
 `request_id`、`source_ip`、`user_agent` は項目として保持するが、現行実装では request からの自動設定は行わない。
 
@@ -864,6 +912,8 @@ scope_not_allowed_for_client
 scope_not_allowed_for_role
 scope_exceeds_subject_token
 token_revoked
+unsupported_token_type
+token_invalid_claims
 ```
 
 ### 19.5 成功ログ例
@@ -934,6 +984,7 @@ token_revoked
 - Opaque Token を使う
 - Opaque Token Introspection に依存する
 - access token 本体をログに出す
+- revocation 監査ログに token 本体を出す
 - relation service の詳細な失敗理由を外部レスポンスに出す
 - relation service の失敗レスポンスを cache hit として扱う
 ```
@@ -951,7 +1002,6 @@ token_revoked
 - API path の最終形
 - ユーザー認証後の tenant 選択フロー
 - Resource Server ごとの permission 再確認ポリシー
-- jti denylist を常時使うか、強制失効時のみ使うか
 - 本番 relation service で `admin` role を扱うか
 ```
 

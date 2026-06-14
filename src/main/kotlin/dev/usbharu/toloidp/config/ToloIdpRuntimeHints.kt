@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.config
 
+import dev.usbharu.toloidp.audit.TokenAuditEvent
 import dev.usbharu.toloidp.logging.KeyValueLoggingEventEnhancer
 import org.springframework.aot.hint.ExecutableMode
 import org.springframework.aot.hint.MemberCategory
@@ -24,6 +25,11 @@ class ToloIdpRuntimeHints : RuntimeHintsRegistrar {
         )
         reflection.registerType<SignatureAlgorithm>()
         reflection.registerType<Duration>()
+        reflection.registerType<TokenAuditEvent>(
+            MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+            MemberCategory.INVOKE_PUBLIC_METHODS,
+            MemberCategory.DECLARED_FIELDS,
+        )
 
         val resources = hints.resources()
         resources.registerPattern("db/migration/**")
