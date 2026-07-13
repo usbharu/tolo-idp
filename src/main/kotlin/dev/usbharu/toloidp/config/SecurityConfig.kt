@@ -165,6 +165,7 @@ class SecurityConfig {
         val authorizationServerConfigurer = OAuth2AuthorizationServerConfigurer()
         http.with(authorizationServerConfigurer) { authorizationServer ->
             authorizationServer
+                .oidc { }
                 .registeredClientRepository(registeredClientRepository)
                 .authorizationService(authorizationService)
                 .authorizationConsentService(authorizationConsentService)

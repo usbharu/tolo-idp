@@ -22,6 +22,16 @@ class AuthorizationServerSurfaceTests(
     @Autowired private val mockMvc: MockMvc,
 ) {
     @Test
+    fun openIdProviderConfigurationIsPubliclyAvailable() {
+        mockMvc.perform(get("/.well-known/openid-configuration"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.issuer").value("http://localhost:8080"))
+            .andExpect(jsonPath("$.authorization_endpoint").exists())
+            .andExpect(jsonPath("$.token_endpoint").exists())
+            .andExpect(jsonPath("$.jwks_uri").exists())
+    }
+
+    @Test
     fun authorizationServerMetadataOnlyAdvertisesSupportedSurface() {
         mockMvc.perform(get("/.well-known/oauth-authorization-server"))
             .andExpect(status().isOk)
