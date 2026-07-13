@@ -39,6 +39,7 @@ data class IdpProperties(
         val enabled: Boolean = false,
         val clientSecret: String = "secret",
         val userPassword: String = "password",
+        val membershipCacheTtl: Duration = Duration.ofDays(3650),
     )
 
     data class Jwk(

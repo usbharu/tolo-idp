@@ -11,6 +11,7 @@ import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.ratelimit.RateLimitFilter
 import dev.usbharu.toloidp.scope.ScopePolicy
+import dev.usbharu.toloidp.security.AuthorizationLoginRedirectFilter
 import dev.usbharu.toloidp.security.JtiDenylistRepository
 import dev.usbharu.toloidp.security.SpecTokenRevocationAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
@@ -232,11 +233,13 @@ class SecurityConfig {
         }
 
         http.securityMatcher(authorizationServerConfigurer.endpointsMatcher)
+            .authorizeHttpRequests { it.anyRequest().authenticated() }
             .csrf { it.ignoringRequestMatchers(authorizationServerConfigurer.endpointsMatcher) }
             .exceptionHandling {
                 it.authenticationEntryPoint(HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
             }
             .formLogin { it.disable() }
+        http.addFilterAfter(AuthorizationLoginRedirectFilter(), SecurityContextHolderFilter::class.java)
         addRateLimitFilter(http, rateLimitFilter)
         return http.build()
     }
@@ -251,7 +254,7 @@ class SecurityConfig {
         rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
         http.authorizeHttpRequests {
-            it.requestMatchers("/actuator/health", "/api/login").permitAll()
+            it.requestMatchers("/actuator/health", "/api/login", "/login").permitAll()
                 .anyRequest().authenticated()
         }
             .exceptionHandling {

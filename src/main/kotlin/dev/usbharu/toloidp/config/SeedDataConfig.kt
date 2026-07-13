@@ -3,6 +3,12 @@ package dev.usbharu.toloidp.config
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientPolicyRepository
 import dev.usbharu.toloidp.client.ClientType
+import dev.usbharu.toloidp.relation.EventMembership
+import dev.usbharu.toloidp.relation.RelationMembershipCache
+import dev.usbharu.toloidp.relation.RelationMembershipCacheId
+import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
+import dev.usbharu.toloidp.relation.TenantMembership
+import dev.usbharu.toloidp.scope.RelationRole
 import org.springframework.boot.ApplicationRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -17,6 +23,7 @@ import org.springframework.security.oauth2.server.authorization.settings.OAuth2T
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings
 import org.springframework.security.provisioning.UserDetailsManager
 import org.springframework.transaction.annotation.Transactional
+import java.time.Clock
 import java.time.Duration
 import java.util.UUID
 
@@ -29,6 +36,8 @@ class SeedDataConfig {
         userDetailsManager: UserDetailsManager,
         registeredClientRepository: RegisteredClientRepository,
         clientPolicyRepository: ClientPolicyRepository,
+        relationMembershipCacheRepository: RelationMembershipCacheRepository,
+        clock: Clock,
     ): ApplicationRunner =
         SeedDataRunner(
             properties,
@@ -36,6 +45,8 @@ class SeedDataConfig {
             userDetailsManager,
             registeredClientRepository,
             clientPolicyRepository,
+            relationMembershipCacheRepository,
+            clock,
         )
 }
 
@@ -45,6 +56,8 @@ open class SeedDataRunner(
     private val userDetailsManager: UserDetailsManager,
     private val registeredClientRepository: RegisteredClientRepository,
     private val clientPolicyRepository: ClientPolicyRepository,
+    private val relationMembershipCacheRepository: RelationMembershipCacheRepository,
+    private val clock: Clock,
 ) : ApplicationRunner {
     @Transactional
     override fun run(args: org.springframework.boot.ApplicationArguments) {
@@ -108,5 +121,26 @@ open class SeedDataRunner(
                 ),
             )
         }
+
+        seedRelationMembership()
+    }
+
+    private fun seedRelationMembership() {
+        val cacheId = RelationMembershipCacheId("tenant-a", "user-123")
+        val now = clock.instant()
+        val cache = RelationMembershipCache(
+            cacheId = cacheId,
+            membership = TenantMembership(
+                tenantId = "tenant-a",
+                tenantRole = RelationRole.OWNER,
+                events = listOf(EventMembership("event-1", RelationRole.STAFF)),
+            ),
+            cachedAt = now,
+            expiresAt = now.plus(properties.seed.membershipCacheTtl),
+        )
+        if (relationMembershipCacheRepository.existsById(cacheId)) {
+            cache.isNewEntity = false
+        }
+        relationMembershipCacheRepository.save(cache)
     }
 }
