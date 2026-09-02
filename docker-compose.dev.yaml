@@ -40,7 +40,7 @@ services:
   db:
     image: postgres:17-alpine
     ports:
-      - "5432:5432"
+      - "15432:5432"
     environment:
       POSTGRES_DB: tolo_idp
       POSTGRES_USER: tolo_idp
@@ -59,7 +59,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "16379:6379"
     volumes:
       - redis-dev-data:/data
     healthcheck:
