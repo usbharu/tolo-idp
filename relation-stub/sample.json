@@ -1,0 +1,24 @@
+{
+  "tenants": [
+    { "id": "tenant-a", "name": "Tenant A (seed user is owner)" },
+    { "id": "tenant-b", "name": "Tenant B (seed user is not a member)" }
+  ],
+  "events": [
+    { "id": "event-1", "tenantId": "tenant-a", "name": "Event 1 (seed user is owner)" },
+    { "id": "event-2", "tenantId": "tenant-a", "name": "Event 2 (seed user is staff)" },
+    { "id": "event-3", "tenantId": "tenant-a", "name": "Event 3 (seed user has no role)" },
+    { "id": "event-b1", "tenantId": "tenant-b", "name": "Event B1" }
+  ],
+  "tenantMembers": [
+    { "tenantId": "tenant-a", "userId": "user-123", "role": "owner" },
+    { "tenantId": "tenant-a", "userId": "user-456", "role": "staff" },
+    { "tenantId": "tenant-b", "userId": "user-789", "role": "owner" }
+  ],
+  "eventMembers": [
+    { "eventId": "event-1", "userId": "user-123", "role": "owner" },
+    { "eventId": "event-2", "userId": "user-123", "role": "staff" },
+    { "eventId": "event-2", "userId": "user-456", "role": "owner" },
+    { "eventId": "event-3", "userId": "user-456", "role": "staff" },
+    { "eventId": "event-b1", "userId": "user-789", "role": "owner" }
+  ]
+}
