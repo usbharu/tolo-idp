@@ -194,6 +194,66 @@ class SecurityComponentTests(
     }
 
     @Test
+    fun tenantAuthorizationValidatorAcceptsOpenIdScopeRegardlessOfRole() {
+        cacheRepository.deleteAll()
+        cacheMembership(
+            TenantMembership(
+                tenantId = "tenant-a",
+                tenantRole = RelationRole.STAFF,
+                events = emptyList(),
+            ),
+        )
+        val validator = TenantAuthorizationValidator(clientPolicyRepository, resourceParser, relationService, scopePolicy)
+
+        validator.accept(authorizationContext(scopes = setOf("openid", "tenant.read")))
+    }
+
+    @Test
+    fun tenantAuthorizationValidatorStillRejectsRoleScopeWhenOpenIdIsRequested() {
+        cacheRepository.deleteAll()
+        cacheMembership(
+            TenantMembership(
+                tenantId = "tenant-a",
+                tenantRole = RelationRole.STAFF,
+                events = emptyList(),
+            ),
+        )
+        val validator = TenantAuthorizationValidator(clientPolicyRepository, resourceParser, relationService, scopePolicy)
+
+        val exception = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
+            validator.accept(authorizationContext(scopes = setOf("openid", "tenant.write")))
+        }
+
+        assertEquals("invalid_scope", exception.error.errorCode)
+    }
+
+    @Test
+    fun jwtCustomizerIncludesOpenIdScopeInTenantAccessToken() {
+        val context = jwtContext(
+            grantType = AuthorizationGrantType.AUTHORIZATION_CODE,
+            scopes = setOf("openid", "tenant.read"),
+            authorization = OAuth2Authorization.withRegisteredClient(registeredClient)
+                .principalName("user-123")
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .attribute(
+                    OAuth2AuthorizationRequest::class.java.name,
+                    oauthAuthorizationRequest(
+                        resource = "https://api.example.com/tenants/tenant-a",
+                        audience = "backend-api",
+                        scopes = setOf("openid", "tenant.read"),
+                    ),
+                )
+                .build(),
+        )
+
+        jwtCustomizer.customize(context)
+
+        val claims = context.claims.build().claims
+        assertEquals(TOKEN_USE_TENANT_ACCESS, claims["token_use"])
+        assertEquals("openid tenant.read", claims["scope"])
+    }
+
+    @Test
     fun jwtCustomizerAddsTenantAccessClaimsForAuthorizationCodeGrant() {
         val context = jwtContext(
             grantType = AuthorizationGrantType.AUTHORIZATION_CODE,
@@ -362,7 +422,7 @@ class SecurityComponentTests(
                 allowedGrantTypes = allowedGrantTypes,
                 allowedTransitions = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),
                 allowedAudiences = setOf("backend-api"),
-                allowedScopes = setOf("tenant.read", "tenant.write", "events.read", "events.write"),
+                allowedScopes = setOf("openid", "tenant.read", "tenant.write", "events.read", "events.write"),
                 tenantAccessTtl = Duration.ofSeconds(900),
                 eventAccessTtl = Duration.ofSeconds(600),
             ),

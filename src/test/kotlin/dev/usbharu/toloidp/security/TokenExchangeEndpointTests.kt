@@ -325,6 +325,18 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
+    fun rejectsOpenIdScopeOnEventAccessExchangeAsInvalidScope() {
+        replaceClient123Policy(allowedScopes = setOf("openid", "tenant.read", "events.read", "events.write"))
+        val subjectToken = saveTenantAuthorization(scopes = setOf("openid", "tenant.read", "events.read"))
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, scope = "openid events.read"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_scope"))
+
+        assertEquals("scope_not_allowed_for_role", latestAudit()["failure_reason"])
+    }
+
+    @Test
     fun rejectsScopeExceedingSubjectTokenAsInvalidGrant() {
         val subjectToken = saveTenantAuthorization(scopes = setOf("events.read"))
 
