@@ -37,7 +37,7 @@ class LoginController(
     fun login(
         @RequestBody request: LoginRequest,
         httpRequest: HttpServletRequest,
-    ): ResponseEntity<Any> {
+    ): ResponseEntity<LoginResponse> {
         log.structuredInfo(
             "Login started",
             "event" to "login_started",
