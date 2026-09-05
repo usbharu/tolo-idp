@@ -56,6 +56,23 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  runn:
+    image: ghcr.io/k1low/runn:v1.10.0-slim
+    profiles:
+      - scenario
+    # イメージの entrypoint.sh は `runn $@` と引用符なしで展開するため、空白を含む
+    # --host-rules の値が分割される。runn を直接呼ぶ。
+    entrypoint: ["runn"]
+    command: ["run", "--verbose", "--host-rules", "localhost app:8080", "/books/**/*.yml"]
+    environment:
+      IDP_ISSUER: http://localhost:18080
+    volumes:
+      - ./scenario:/books:ro
+    depends_on:
+      app:
+        condition: service_started
+    restart: "no"
+
 volumes:
   postgres-dev-data:
   redis-dev-data:

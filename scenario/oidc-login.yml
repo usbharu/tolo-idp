@@ -1,0 +1,121 @@
+# ブラウザで /api/login によりログインし、そのセッションを保持したまま
+# OIDC Authorization Code フロー (PKCE) を開始するシナリオ。
+#
+# 前提とする配置 (開発中のため、ログインページは IdP と同一オリジンで提供する):
+#   - IdP:          localhost:18080 (このシナリオの runner `idp`。現時点ではドメインは意識しない)
+#   - ログインページ: IdP と同じオリジンから配信される
+#   - RP:           Discovery 文書から endpoint を解決して認可リクエストを組み立てる
+#
+# ブラウザの挙動を HTTP レベルで再現する:
+#   - ログインページから fetch で /api/login を呼ぶ。同一オリジンなので
+#     CORS preflight は発生しないが、POST には Origin ヘッダが付く。
+#   - 応答の Set-Cookie でセッション cookie を保持する (useCookie)。
+#   - RP が返す 302 に従い、ブラウザは authorization_endpoint へ top-level navigation する。
+#   - 認可応答 (302) は追従せず、Location を検証する (notFollowRedirect)。
+#
+# ログインページを別ドメイン (example.com など) に分離する場合は、/api/login の前に
+# CORS preflight (OPTIONS) を追加し、Origin と Access-Control-* の検証を戻す。
+# 未ログイン状態で認可エンドポイントに到達した場合の導線 (ログインページへの遷移) は
+# 実装側の整備後に追加する。
+desc: ログイン済みセッションで OIDC Authorization Code フローを開始する
+labels:
+  - oidc
+  - login
+runners:
+  idp:
+    endpoint: ${IDP_ISSUER:-http://localhost:18080}
+    useCookie: true
+    notFollowRedirect: true
+    timeout: 10sec
+vars:
+  issuer: ${IDP_ISSUER:-http://localhost:18080}
+  # seed data (SeedDataConfig / relation-stub/sample.json)
+  username: user-123
+  password: password
+  tenant_id: tenant-a
+  client_id: client-123
+  redirect_uri: http://127.0.0.1:8080/login/oauth2/code/client-123
+  scope: openid tenant.read
+  state: scenario-state-0123456789
+  nonce: scenario-nonce-0123456789
+  # PKCE S256 の固定ペア (RFC 7636 Appendix B)
+  code_verifier: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+  code_challenge: E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+steps:
+  wait_for_idp:
+    desc: IdP の起動を待つ (Compose 起動直後は接続拒否になり得るため)
+    idp:
+      /actuator/health:
+        get:
+          useCookie: false
+    loop:
+      count: 60
+      until: current.res?.status == 200
+      interval: 2
+
+  discovery:
+    desc: RP として OIDC Discovery 文書を取得し、endpoint を解決する
+    idp:
+      /.well-known/openid-configuration:
+        get:
+          useCookie: false
+          headers:
+            Accept: application/json
+    test: |
+      current.res.status == 200
+      && current.res.body.issuer == vars.issuer
+      && hasPrefix(current.res.body.authorization_endpoint, vars.issuer + "/")
+      && hasPrefix(current.res.body.token_endpoint, vars.issuer + "/")
+      && hasPrefix(current.res.body.jwks_uri, vars.issuer + "/")
+      && "code" in current.res.body.response_types_supported
+      && "authorization_code" in current.res.body.grant_types_supported
+      && "openid" in current.res.body.scopes_supported
+      && "S256" in current.res.body.code_challenge_methods_supported
+      && "RS256" in current.res.body.id_token_signing_alg_values_supported
+    bind:
+      # runn の HTTP runner は runner endpoint 起点の path しか扱えないため、
+      # Discovery で得た絶対 URL から issuer を取り除いた path を以降の step で使う
+      # (bind した値は `vars.` を付けずに参照する)。
+      authorization_path: trimPrefix(current.res.body.authorization_endpoint, vars.issuer)
+
+  login:
+    desc: 同一オリジンのログインページから /api/login を呼び、セッション cookie を受け取る
+    idp:
+      /api/login:
+        post:
+          headers:
+            Origin: "{{ vars.issuer }}"
+            Referer: "{{ vars.issuer }}/login"
+            Accept: application/json
+          body:
+            application/json:
+              username: "{{ vars.username }}"
+              password: "{{ vars.password }}"
+              tenantId: "{{ vars.tenant_id }}"
+    test: |
+      current.res.status == 200
+      && current.res.body.username == vars.username
+      && current.res.body.tenantId == vars.tenant_id
+      && current.res.body.resource == "https://api.example.com/tenants/" + vars.tenant_id
+      && "ROLE_USER" in current.res.body.authorities
+      && current.res.cookies["JSESSIONID"] != nil
+      && current.res.cookies["JSESSIONID"].HttpOnly
+
+  authorize:
+    desc: RP の redirect に従い、ブラウザがセッション cookie 付きで認可エンドポイントへ遷移する
+    idp:
+      "{{ authorization_path }}?response_type=code&client_id={{ urlencode(vars.client_id) }}&redirect_uri={{ urlencode(vars.redirect_uri) }}&scope={{ urlencode(vars.scope) }}&state={{ urlencode(vars.state) }}&nonce={{ urlencode(vars.nonce) }}&code_challenge={{ urlencode(vars.code_challenge) }}&code_challenge_method=S256":
+        get:
+          headers:
+            Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+            Referer: "{{ vars.issuer }}/"
+            Sec-Fetch-Site: same-origin
+            Sec-Fetch-Mode: navigate
+            Sec-Fetch-Dest: document
+    test: |
+      current.res.status == 302
+      && current.res.headers["Location"] != nil
+      && hasPrefix(current.res.headers["Location"][0], vars.redirect_uri + "?")
+      && url(current.res.headers["Location"][0]).Query().Get("error") == ""
+      && url(current.res.headers["Location"][0]).Query().Get("state") == vars.state
+      && url(current.res.headers["Location"][0]).Query().Get("code") != ""
