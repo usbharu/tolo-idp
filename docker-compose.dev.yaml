@@ -4,7 +4,7 @@ services:
   app:
     image: tolo-idp:0.0.1-SNAPSHOT
     ports:
-      - "8080:8080"
+      - "18080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: dev
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
@@ -14,6 +14,7 @@ services:
       SPRING_FLYWAY_LOCATIONS: classpath:db/postgresql
       TOLO_IDP_ISSUER: http://localhost:18080
       TOLO_IDP_RATE_LIMIT_REDIS_URI: redis://redis:6379
+      TOLO_IDP_RELATION_BASE_URL: http://relation-stub:8080
       TOLO_IDP_SEED_ENABLED: "true"
       TOLO_IDP_JWK_ALLOW_EPHEMERAL: "true"
     depends_on:
@@ -21,12 +22,25 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      relation-stub:
+        condition: service_started
+    restart: unless-stopped
+
+  relation-stub:
+    image: ghcr.io/pj-hoakari/tolo-relation-stub:latest
+    ports:
+      - "18081:8080"
+    environment:
+      RELATION_ADDR: ":8080"
+      RELATION_DATA: /data/sample.json
+    volumes:
+      - ./relation-stub:/data:ro
     restart: unless-stopped
 
   db:
     image: postgres:17-alpine
     ports:
-      - "5432:5432"
+      - "15432:5432"
     environment:
       POSTGRES_DB: tolo_idp
       POSTGRES_USER: tolo_idp
@@ -45,7 +59,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "16379:6379"
     volumes:
       - redis-dev-data:/data
     healthcheck:
