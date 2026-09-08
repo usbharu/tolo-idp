@@ -175,7 +175,10 @@ class SecurityConfig {
                     metadataEndpoint.authorizationServerMetadataCustomizer { metadata ->
                         metadata.claims { claims ->
                             claims[OAuth2AuthorizationServerMetadataClaimNames.REVOCATION_ENDPOINT_AUTH_METHODS_SUPPORTED] =
-                                listOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+                                listOf(
+                                    ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                                    ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                                )
                         }
                         metadata.grantTypes {
                             it.clear()
@@ -185,10 +188,12 @@ class SecurityConfig {
                         metadata.tokenEndpointAuthenticationMethods {
                             it.clear()
                             it.add(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+                            it.add(ClientAuthenticationMethod.CLIENT_SECRET_POST.value)
                         }
                         metadata.tokenIntrospectionEndpointAuthenticationMethods {
                             it.clear()
                             it.add(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+                            it.add(ClientAuthenticationMethod.CLIENT_SECRET_POST.value)
                         }
                     }
                 }
