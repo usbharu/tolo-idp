@@ -2,6 +2,8 @@ package dev.usbharu.toloidp.config
 
 import dev.usbharu.toloidp.audit.TokenAuditEvent
 import dev.usbharu.toloidp.logging.KeyValueLoggingEventEnhancer
+import dev.usbharu.toloidp.relation.HttpRelationService
+import org.springframework.aot.hint.BindingReflectionHintsRegistrar
 import org.springframework.aot.hint.ExecutableMode
 import org.springframework.aot.hint.MemberCategory
 import org.springframework.aot.hint.RuntimeHints
@@ -29,6 +31,11 @@ class ToloIdpRuntimeHints : RuntimeHintsRegistrar {
             MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
             MemberCategory.INVOKE_PUBLIC_METHODS,
             MemberCategory.DECLARED_FIELDS,
+        )
+
+        BindingReflectionHintsRegistrar().registerReflectionHints(
+            reflection,
+            HttpRelationService.MembershipResponse::class.java,
         )
 
         val resources = hints.resources()
