@@ -55,8 +55,14 @@ class ScopePolicy(
         }
     }
 
+    fun requireAllowedForRole(requested: Set<String>, role: RelationRole, reason: String) {
+        requireAllowed(requested - IDENTITY_SCOPES, allowedScopes(role), reason)
+    }
+
     companion object {
         const val SCOPE_AUTHORITY_PREFIX = "SCOPE_"
+
+        val IDENTITY_SCOPES: Set<String> = setOf("openid")
 
         fun defaultRoleHierarchy(): RoleHierarchy =
             RoleHierarchyImpl.fromHierarchy(

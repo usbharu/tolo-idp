@@ -75,6 +75,7 @@ open class SeedDataRunner(
                     .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                     .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
                     .redirectUri("http://127.0.0.1:8080/login/oauth2/code/client-123")
+                    .scope("openid")
                     .scope("tenant.read")
                     .scope("tenant.write")
                     .scope("events.read")
@@ -102,7 +103,7 @@ open class SeedDataRunner(
                     ),
                     allowedTransitions = setOf("tenant_access:event_access"),
                     allowedAudiences = setOf("backend-api"),
-                    allowedScopes = setOf("tenant.read", "tenant.write", "events.read", "events.write"),
+                    allowedScopes = setOf("openid", "tenant.read", "tenant.write", "events.read", "events.write"),
                     tenantAccessTtl = Duration.ofSeconds(900),
                     eventAccessTtl = Duration.ofSeconds(600),
                 ),
